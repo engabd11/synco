@@ -56,29 +56,44 @@ def _hues(*hsv: tuple[float, float, float]) -> list[RGB]:
     return [colorsys.hsv_to_rgb(h, s, v) for h, s, v in hsv]
 
 
-# Static schemes. Values chosen to look good on saturated Hue colour bulbs.
+# Smooth, harmonious palettes — analogous hues that blend pleasantly as the
+# colour drifts, rather than harsh primaries. Saturation is eased back from full
+# so they're easy on the eyes while still vivid on Hue colour bulbs.
 _SCHEMES: dict[ColorScheme, Palette] = {
-    ColorScheme.WARM: Palette(_hues(
-        (0.00, 1.0, 1.0), (0.04, 1.0, 1.0), (0.08, 0.9, 1.0), (0.95, 0.8, 1.0),
+    # Deep violet -> magenta -> coral -> orange -> warm gold.
+    ColorScheme.SUNSET: Palette(_hues(
+        (0.80, 0.80, 0.85), (0.92, 0.85, 1.0), (0.99, 0.85, 1.0),
+        (0.045, 0.85, 1.0), (0.09, 0.80, 1.0), (0.12, 0.70, 1.0),
     )),
-    ColorScheme.COOL: Palette(_hues(
-        (0.55, 1.0, 1.0), (0.50, 0.9, 1.0), (0.70, 1.0, 1.0), (0.45, 0.8, 1.0),
+    # Aqua -> teal -> ocean blue -> deep blue.
+    ColorScheme.OCEAN: Palette(_hues(
+        (0.46, 0.75, 1.0), (0.50, 0.85, 1.0), (0.55, 0.90, 1.0),
+        (0.60, 0.90, 1.0), (0.64, 0.85, 0.95),
     )),
-    ColorScheme.NEON: Palette(_hues(
-        (0.90, 1.0, 1.0), (0.50, 1.0, 1.0), (0.28, 1.0, 1.0), (0.78, 1.0, 1.0),
+    # Lime -> green -> emerald -> teal.
+    ColorScheme.FOREST: Palette(_hues(
+        (0.27, 0.70, 1.0), (0.33, 0.80, 1.0), (0.38, 0.85, 0.95),
+        (0.44, 0.80, 0.95),
     )),
-    ColorScheme.PARTY: Palette(_hues(
-        (0.00, 1.0, 1.0), (0.13, 1.0, 1.0), (0.33, 1.0, 1.0),
-        (0.50, 1.0, 1.0), (0.66, 1.0, 1.0), (0.83, 1.0, 1.0),
+    # Soft lilac -> violet -> orchid -> rose.
+    ColorScheme.LAVENDER: Palette(_hues(
+        (0.72, 0.55, 1.0), (0.77, 0.65, 1.0), (0.83, 0.60, 1.0),
+        (0.90, 0.55, 1.0),
     )),
-    ColorScheme.MONO: Palette(_hues(
-        (0.08, 0.6, 1.0), (0.08, 0.3, 1.0), (0.08, 0.9, 0.8),
+    # Cosy red -> scarlet -> orange -> amber.
+    ColorScheme.EMBER: Palette(_hues(
+        (0.99, 0.90, 1.0), (0.02, 0.90, 1.0), (0.05, 0.90, 1.0),
+        (0.09, 0.85, 1.0), (0.12, 0.80, 1.0),
     )),
-    ColorScheme.RAINBOW: Palette(_hues(*[(i / 12.0, 1.0, 1.0) for i in range(12)])),
+    # Northern-lights teal -> green -> blue -> violet -> pink.
+    ColorScheme.AURORA: Palette(_hues(
+        (0.45, 0.80, 1.0), (0.36, 0.75, 1.0), (0.55, 0.80, 1.0),
+        (0.72, 0.75, 1.0), (0.88, 0.65, 1.0),
+    )),
 }
 
 # Fallback used when album-art extraction is unavailable.
-ALBUM_ART_FALLBACK = ColorScheme.PARTY
+ALBUM_ART_FALLBACK = ColorScheme.SUNSET
 
 
 def get_palette(scheme: ColorScheme) -> Palette:

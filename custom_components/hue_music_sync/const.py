@@ -17,6 +17,7 @@ CONF_AREAS: Final = "areas"  # list of enabled entertainment_configuration ids
 # --- Per-area option keys ------------------------------------------------
 CONF_MODE: Final = "mode"
 CONF_COLOUR: Final = "colour"
+CONF_BRIGHTNESS: Final = "brightness"
 CONF_MEDIA_PLAYER: Final = "media_player"
 CONF_LATENCY_MS: Final = "latency_ms"
 
@@ -50,23 +51,27 @@ BANDS: Final[dict[str, tuple[float, float]]] = {
 }
 
 
+DEFAULT_BRIGHTNESS: Final = 1.0  # master brightness ceiling (0..1)
+
+
 class ColorScheme(StrEnum):
-    """Selectable color schemes."""
+    """Selectable colour themes — smooth, harmonious palettes plus album art."""
 
     ALBUM_ART = "album_art"
-    WARM = "warm"
-    COOL = "cool"
-    NEON = "neon"
-    PARTY = "party"
-    MONO = "mono"
-    RAINBOW = "rainbow"
+    SUNSET = "sunset"
+    OCEAN = "ocean"
+    FOREST = "forest"
+    LAVENDER = "lavender"
+    EMBER = "ember"
+    AURORA = "aurora"
 
 
 class SyncMode(StrEnum):
-    """Samsung-style intensity ladder; the only user-facing control.
+    """Samsung-style intensity ladder controlling behaviour only.
 
-    Reactivity (dimming range, beat brightening, shimmer) increases up the
-    ladder. Parameters per mode live in ``effects.modes.MODE_PARAMS``.
+    Sets how reactive the lights are (dimming range, beat brightening, shimmer)
+    *relative to* the separate master brightness — not the absolute level.
+    Parameters per mode live in ``effects.modes.MODE_PARAMS``.
     """
 
     SUBTLE = "subtle"  # no dimming, colours drift slowly
@@ -78,7 +83,7 @@ class SyncMode(StrEnum):
 DEFAULT_MODE: Final = SyncMode.HIGH
 DEFAULT_COLOUR: Final = ColorScheme.ALBUM_ART
 
-PLATFORMS: Final = ["switch", "select"]
+PLATFORMS: Final = ["switch", "select", "number"]
 
 
 def signal_area_update(area_id: str) -> str:

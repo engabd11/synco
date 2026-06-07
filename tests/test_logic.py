@@ -80,7 +80,7 @@ def test_palette_sample_is_cyclic():
 
 
 def test_palette_spread_count():
-    pal = get_palette(ColorScheme.PARTY)
+    pal = get_palette(ColorScheme.SUNSET)
     assert len(pal.spread(7)) == 7
     assert len(pal.spread(1)) == 1
     assert pal.spread(0) == []

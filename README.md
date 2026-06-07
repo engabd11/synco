@@ -45,26 +45,30 @@ the area and the frequency band it represents.
 
 (Alternatively copy `custom_components/hue_music_sync/` into your HA `config/custom_components/` folder.)
 
-Each enabled area becomes a device with just a switch and two pickers — kept
-deliberately Samsung-simple:
+Each enabled area becomes a device with a switch and three independent controls,
+matching Samsung's model:
 
 | Entity | Purpose |
 | --- | --- |
 | `switch.music_sync_<area>` | Activate / deactivate sync |
-| `select` Mode | Intensity / rhythm: `Subtle`, `Medium`, `High`, `Intense` |
-| `select` Colour | `Album colours` or a preset theme (Warm/Cool/Neon/Party/Mono/Rainbow) |
+| `select` Intensity | How the lights *behave*: `Subtle`, `Medium`, `High`, `Intense` |
+| `select` Colour | `Album colours` or a preset theme (Sunset/Ocean/Forest/Lavender/Ember/Aurora) |
+| `number` Brightness | Master brightness ceiling (5–100%), separate from intensity |
 
-**Mode** controls only *how the lights move* — how much they dim and how hard
-they react to the beat — independent of colour:
+**Intensity** controls only *how the lights move* — how much they dim and how
+hard they react to the beat — relative to the brightness ceiling:
 
 - **Subtle** — no dimming; colours just drift slowly.
 - **Medium** — stays bright; some lights pulse brighter on the beat.
-- **High** — dims no lower than ~30%, with bright bass + treble beats.
-- **Intense** — full 0–100% dimming/brightening with treble shimmer.
+- **High** — dims no lower than ~30% of the ceiling, with bright bass + treble beats.
+- **Intense** — full dimming/brightening across the whole range, with treble shimmer.
 
-**Colour** picks the palette independently — the current album art, or a preset
-mixed-colour theme. The followed media player auto-detects the one that's
-playing (override via the `activate` service if needed).
+**Brightness** sets the overall ceiling; intensity varies brightness below it.
+At Subtle, brightness is simply the steady level.
+
+**Colour** picks the palette independently — the current album art, or a smooth,
+easy-on-the-eyes preset theme. The followed media player auto-detects the one
+that's playing (override via the `activate` service if needed).
 
 > **One area at a time per bridge.** A Hue bridge can stream to only one
 > entertainment area at a time. Activating a second area on the same bridge

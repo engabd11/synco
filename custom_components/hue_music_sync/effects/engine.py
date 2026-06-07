@@ -20,7 +20,7 @@ _DECAY = 0.16
 _COLOR_LERP = 0.2
 
 # Pleasant fallback palette when no album art is available (e.g. live radio).
-_FALLBACK_SCHEME = ColorScheme.WARM
+_FALLBACK_SCHEME = ColorScheme.SUNSET
 
 
 class EffectEngine:
@@ -29,6 +29,7 @@ class EffectEngine:
     def __init__(self, channels: list[EntertainmentChannel]) -> None:
         self.palette: Palette = get_palette(_FALLBACK_SCHEME)
         self.params = MODE_PARAMS[DEFAULT_MODE]
+        self.brightness = 1.0  # master ceiling (0..1), independent of mode
         self.time: float = 0.0
         self.set_channels(channels)
 
@@ -56,6 +57,10 @@ class EffectEngine:
     def set_mode(self, mode: SyncMode) -> None:
         self.params = MODE_PARAMS[mode]
 
+    def set_brightness(self, brightness: float) -> None:
+        """Master brightness ceiling (0..1), scaling the mode's output."""
+        self.brightness = max(0.0, min(1.0, brightness))
+
     def render(self, frame: AnalysisFrame, dt: float) -> dict[int, RGB]:
         """Advance time and produce smoothed per-channel RGB (0..1).
 
@@ -80,5 +85,7 @@ class EffectEngine:
             m = max(blended)
             nc = (blended[0] / m, blended[1] / m, blended[2] / m) if m > 1e-6 else (0.0, 0.0, 0.0)
             self._state[cid] = (nc, new_b)
-            out[cid] = (nc[0] * new_b, nc[1] * new_b, nc[2] * new_b)
+            # Master brightness scales the mode envelope (separate from intensity).
+            b = new_b * self.brightness
+            out[cid] = (nc[0] * b, nc[1] * b, nc[2] * b)
         return out

@@ -16,6 +16,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_APP_KEY,
+    CONF_BRIGHTNESS,
     CONF_CLIENT_KEY,
     CONF_COLOUR,
     CONF_HOST,
@@ -125,6 +126,8 @@ def _register_services(hass: HomeAssistant) -> None:
             changes["mode"] = SyncMode(call.data[CONF_MODE])
         if CONF_COLOUR in call.data:
             changes["colour"] = ColorScheme(call.data[CONF_COLOUR])
+        if CONF_BRIGHTNESS in call.data:
+            changes["brightness"] = call.data[CONF_BRIGHTNESS] / 100.0
         if CONF_MEDIA_PLAYER in call.data:
             changes["media_player"] = call.data[CONF_MEDIA_PLAYER]
         return changes
@@ -148,6 +151,9 @@ def _register_services(hass: HomeAssistant) -> None:
     options_fields = {
         vol.Optional(CONF_MODE): vol.In([str(m) for m in SyncMode]),
         vol.Optional(CONF_COLOUR): vol.In([str(c) for c in ColorScheme]),
+        vol.Optional(CONF_BRIGHTNESS): vol.All(
+            vol.Coerce(float), vol.Range(min=5, max=100)
+        ),
         vol.Optional(CONF_MEDIA_PLAYER): cv.entity_id,
     }
     activate_schema = vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_ids, **options_fields})

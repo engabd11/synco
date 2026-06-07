@@ -25,10 +25,12 @@ from .audio.source import MusicAssistantSource
 from .color.album_art import extract_palette
 from .const import (
     CONF_AREAS,
+    CONF_BRIGHTNESS,
     CONF_COLOUR,
     CONF_LATENCY_MS,
     CONF_MEDIA_PLAYER,
     CONF_MODE,
+    DEFAULT_BRIGHTNESS,
     DEFAULT_COLOUR,
     DEFAULT_LATENCY_MS,
     DEFAULT_MODE,
@@ -55,6 +57,7 @@ class AreaSettings:
 
     mode: SyncMode = DEFAULT_MODE
     colour: ColorScheme = DEFAULT_COLOUR
+    brightness: float = DEFAULT_BRIGHTNESS
     media_player: str | None = None
     latency_ms: int = DEFAULT_LATENCY_MS
 
@@ -71,6 +74,7 @@ class AreaSettings:
         return cls(
             mode=mode,
             colour=colour,
+            brightness=float(data.get(CONF_BRIGHTNESS, DEFAULT_BRIGHTNESS)),
             media_player=data.get(CONF_MEDIA_PLAYER),
             latency_ms=int(data.get(CONF_LATENCY_MS, DEFAULT_LATENCY_MS)),
         )
@@ -79,6 +83,7 @@ class AreaSettings:
         return {
             CONF_MODE: str(self.mode),
             CONF_COLOUR: str(self.colour),
+            CONF_BRIGHTNESS: self.brightness,
             CONF_MEDIA_PLAYER: self.media_player,
             CONF_LATENCY_MS: self.latency_ms,
         }
@@ -123,6 +128,7 @@ class SyncSession:
 
     async def start(self) -> None:
         self._engine.set_mode(self._settings.mode)
+        self._engine.set_brightness(self._settings.brightness)
         self._apply_colour()
         await self._bridge.start_stream(self._config.id)
         try:
@@ -140,6 +146,7 @@ class SyncSession:
         prev = self._settings
         self._settings = settings
         self._engine.set_mode(settings.mode)
+        self._engine.set_brightness(settings.brightness)
         if settings.colour != prev.colour:
             self._apply_colour()
             self._last_track = None  # re-extract album art if switching to Album

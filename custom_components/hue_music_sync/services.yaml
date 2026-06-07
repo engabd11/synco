@@ -27,12 +27,22 @@ activate:
         select:
           options:
             - album_art
-            - warm
-            - cool
-            - neon
-            - party
-            - mono
-            - rainbow
+            - sunset
+            - ocean
+            - forest
+            - lavender
+            - ember
+            - aurora
+    brightness:
+      name: Brightness
+      description: Master brightness ceiling (5-100%).
+      required: false
+      selector:
+        number:
+          min: 5
+          max: 100
+          step: 5
+          unit_of_measurement: "%"
     media_player:
       name: Media player
       description: Media player to follow. Leave unset to auto-pick the one playing.
@@ -78,12 +88,22 @@ set_options:
         select:
           options:
             - album_art
-            - warm
-            - cool
-            - neon
-            - party
-            - mono
-            - rainbow
+            - sunset
+            - ocean
+            - forest
+            - lavender
+            - ember
+            - aurora
+    brightness:
+      name: Brightness
+      description: Master brightness ceiling (5-100%).
+      required: false
+      selector:
+        number:
+          min: 5
+          max: 100
+          step: 5
+          unit_of_measurement: "%"
     media_player:
       name: Media player
       description: Media player to follow.

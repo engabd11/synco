@@ -42,7 +42,7 @@
   "entity": {
     "select": {
       "mode": {
-        "name": "Mode",
+        "name": "Intensity",
         "state": {
           "subtle": "Subtle",
           "medium": "Medium",
@@ -54,13 +54,18 @@
         "name": "Colour",
         "state": {
           "album_art": "Album colours",
-          "warm": "Warm",
-          "cool": "Cool",
-          "neon": "Neon",
-          "party": "Party",
-          "mono": "Mono",
-          "rainbow": "Rainbow"
+          "sunset": "Sunset",
+          "ocean": "Ocean",
+          "forest": "Forest",
+          "lavender": "Lavender",
+          "ember": "Ember",
+          "aurora": "Aurora"
         }
+      }
+    },
+    "number": {
+      "brightness": {
+        "name": "Brightness"
       }
     }
   },
@@ -76,6 +81,10 @@
         "colour": {
           "name": "Colour",
           "description": "Colour theme: album_art or a preset palette."
+        },
+        "brightness": {
+          "name": "Brightness",
+          "description": "Master brightness ceiling, 5-100%."
         },
         "media_player": {
           "name": "Media player",
@@ -98,6 +107,10 @@
         "colour": {
           "name": "Colour",
           "description": "Colour theme: album_art or a preset palette."
+        },
+        "brightness": {
+          "name": "Brightness",
+          "description": "Master brightness ceiling, 5-100%."
         },
         "media_player": {
           "name": "Media player",
