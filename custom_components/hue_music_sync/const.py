@@ -15,16 +15,15 @@ CONF_CLIENT_KEY: Final = "client_key"  # PSK for DTLS, hex string
 CONF_AREAS: Final = "areas"  # list of enabled entertainment_configuration ids
 
 # --- Per-area option keys ------------------------------------------------
+CONF_MODE: Final = "mode"
+CONF_COLOUR: Final = "colour"
 CONF_MEDIA_PLAYER: Final = "media_player"
-CONF_COLOR_SCHEME: Final = "color_scheme"
-CONF_EFFECT_MODE: Final = "effect_mode"
 CONF_LATENCY_MS: Final = "latency_ms"
-CONF_INTENSITY: Final = "intensity"
 
 # --- Defaults ------------------------------------------------------------
 DEFAULT_LATENCY_MS: Final = 150
 DEFAULT_INTENSITY: Final = 1.0
-DEFAULT_STREAM_FPS: Final = 50  # Hue entertainment recommended max ~50-60 Hz
+DEFAULT_STREAM_FPS: Final = 40  # Hue sweet spot; bulbs update ~12.5Hz, bridge eases
 DEFAULT_NAME: Final = "hue_music_sync#ha"
 
 # Hue entertainment streaming
@@ -63,19 +62,23 @@ class ColorScheme(StrEnum):
     RAINBOW = "rainbow"
 
 
-class EffectMode(StrEnum):
-    """Choreography modes mapping audio features to lights."""
+class SyncMode(StrEnum):
+    """Samsung-style intensity ladder; the only user-facing control.
 
-    PULSE = "pulse"  # whole area pulses on the beat with palette color
-    SPECTRUM = "spectrum"  # channels mapped to frequency bands
-    WAVE = "wave"  # beat triggers a travelling wave across positions
-    AMBIENT = "ambient"  # slow palette drift, gentle energy modulation
+    Reactivity (dimming range, beat brightening, shimmer) increases up the
+    ladder. Parameters per mode live in ``effects.modes.MODE_PARAMS``.
+    """
+
+    SUBTLE = "subtle"  # no dimming, colours drift slowly
+    MEDIUM = "medium"  # stays bright, some lights pulse on beats
+    HIGH = "high"  # dims to ~30%, bright bass/treble beats
+    INTENSE = "intense"  # full 0-100% dimming/brightening + shimmer
 
 
-DEFAULT_COLOR_SCHEME: Final = ColorScheme.ALBUM_ART
-DEFAULT_EFFECT_MODE: Final = EffectMode.SPECTRUM
+DEFAULT_MODE: Final = SyncMode.HIGH
+DEFAULT_COLOUR: Final = ColorScheme.ALBUM_ART
 
-PLATFORMS: Final = ["switch", "select", "number"]
+PLATFORMS: Final = ["switch", "select"]
 
 
 def signal_area_update(area_id: str) -> str:

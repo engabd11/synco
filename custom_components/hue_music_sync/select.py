@@ -1,4 +1,4 @@
-"""Select entities: colour scheme, effect mode and followed media player."""
+"""Select entity: the music-sync Mode preset for an area."""
 
 from __future__ import annotations
 
@@ -8,11 +8,9 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, ColorScheme, EffectMode
+from .const import DOMAIN, ColorScheme, SyncMode
 from .coordinator import SyncManager
 from .entity import HueMusicSyncAreaEntity
-
-_AUTO = "auto"
 
 
 async def async_setup_entry(
@@ -23,78 +21,46 @@ async def async_setup_entry(
     manager: SyncManager = hass.data[DOMAIN][entry.entry_id]
     entities: list[SelectEntity] = []
     for area_id in manager.enabled_areas:
-        entities.append(ColorSchemeSelect(manager, area_id))
-        entities.append(EffectModeSelect(manager, area_id))
-        entities.append(MediaPlayerSelect(manager, area_id))
+        entities.append(ModeSelect(manager, area_id))
+        entities.append(ColourSelect(manager, area_id))
     async_add_entities(entities)
 
 
-class ColorSchemeSelect(HueMusicSyncAreaEntity, SelectEntity):
-    """Pick the active colour scheme."""
+class ModeSelect(HueMusicSyncAreaEntity, SelectEntity):
+    """Pick the intensity/rhythm mode (Subtle..Intense). Does not affect colour."""
 
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_translation_key = "color_scheme"
+    _attr_translation_key = "mode"
+    _attr_icon = "mdi:sine-wave"
+    _attr_options = [str(m) for m in SyncMode]
+
+    def __init__(self, manager: SyncManager, area_id: str) -> None:
+        super().__init__(manager, area_id, "mode")
+
+    @property
+    def current_option(self) -> str:
+        return str(self._manager.get_settings(self._area_id).mode)
+
+    async def async_select_option(self, option: str) -> None:
+        await self._manager.update_settings(self._area_id, mode=SyncMode(option))
+        self.async_write_ha_state()
+
+
+class ColourSelect(HueMusicSyncAreaEntity, SelectEntity):
+    """Pick the colour theme: Album colours or a preset mixed-colour palette."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_translation_key = "colour"
     _attr_icon = "mdi:palette"
-    _attr_options = [str(s) for s in ColorScheme]
+    _attr_options = [str(c) for c in ColorScheme]
 
     def __init__(self, manager: SyncManager, area_id: str) -> None:
-        super().__init__(manager, area_id, "color_scheme")
+        super().__init__(manager, area_id, "colour")
 
     @property
     def current_option(self) -> str:
-        return str(self._manager.get_settings(self._area_id).color_scheme)
+        return str(self._manager.get_settings(self._area_id).colour)
 
     async def async_select_option(self, option: str) -> None:
-        await self._manager.update_settings(
-            self._area_id, color_scheme=ColorScheme(option)
-        )
-        self.async_write_ha_state()
-
-
-class EffectModeSelect(HueMusicSyncAreaEntity, SelectEntity):
-    """Pick the choreography mode."""
-
-    _attr_entity_category = EntityCategory.CONFIG
-    _attr_translation_key = "effect_mode"
-    _attr_icon = "mdi:auto-fix"
-    _attr_options = [str(m) for m in EffectMode]
-
-    def __init__(self, manager: SyncManager, area_id: str) -> None:
-        super().__init__(manager, area_id, "effect_mode")
-
-    @property
-    def current_option(self) -> str:
-        return str(self._manager.get_settings(self._area_id).effect_mode)
-
-    async def async_select_option(self, option: str) -> None:
-        await self._manager.update_settings(
-            self._area_id, effect_mode=EffectMode(option)
-        )
-        self.async_write_ha_state()
-
-
-class MediaPlayerSelect(HueMusicSyncAreaEntity, SelectEntity):
-    """Pick which media player to follow ('auto' = first one playing)."""
-
-    _attr_entity_category = EntityCategory.CONFIG
-    _attr_translation_key = "media_player"
-    _attr_icon = "mdi:speaker"
-
-    def __init__(self, manager: SyncManager, area_id: str) -> None:
-        super().__init__(manager, area_id, "media_player")
-
-    @property
-    def options(self) -> list[str]:
-        players = sorted(
-            s.entity_id for s in self.hass.states.async_all("media_player")
-        )
-        return [_AUTO, *players]
-
-    @property
-    def current_option(self) -> str:
-        return self._manager.get_settings(self._area_id).media_player or _AUTO
-
-    async def async_select_option(self, option: str) -> None:
-        value = None if option == _AUTO else option
-        await self._manager.update_settings(self._area_id, media_player=value)
+        await self._manager.update_settings(self._area_id, colour=ColorScheme(option))
         self.async_write_ha_state()

@@ -2,12 +2,12 @@
 
 The bridge accepts colour data only over a DTLS 1.2 channel secured with a
 pre-shared key (PSK = the bridge ``clientkey``, identity = the application key)
-and the ``PSK-AES128-GCM-SHA256`` cipher. ``python-mbedtls`` — the usual Python
-DTLS option — has no wheels for Python 3.13 (what current HAOS runs), so the
-default transport shells out to the ``openssl`` CLI that ships in HA's Alpine
-container. ``-quiet`` is important: it turns on ``ign_eof`` inside ``s_client``,
-which disables the interactive command-character handling (``Q``/``R`` at the
-start of a line) so arbitrary binary frames can be streamed safely.
+and ``TLS_PSK_WITH_AES_128_GCM_SHA256``. None of the off-the-shelf Python DTLS
+options work inside the Home Assistant container (no ``python-mbedtls`` wheels,
+no ``openssl`` CLI, no PSK support in ``pyOpenSSL``), so the transport uses the
+self-contained :class:`~.dtls.DtlsPskClient` (built on the bundled
+``cryptography``). The synchronous client is driven from the event loop via the
+executor.
 """
 
 from __future__ import annotations
@@ -22,11 +22,9 @@ from ..const import (
     HUE_STREAM_VERSION,
     KEEPALIVE_INTERVAL,
 )
+from .dtls import DtlsError, DtlsPskClient
 
 _LOGGER = logging.getLogger(__name__)
-
-# OpenSSL cipher name for TLS_PSK_WITH_AES_128_GCM_SHA256.
-_CIPHER = "PSK-AES128-GCM-SHA256"
 
 ColorSpaceRGB = 0x00
 ColorSpaceXYB = 0x01
@@ -47,6 +45,26 @@ def float_to_16(value: float) -> int:
     return int(value * 65535 + 0.5)
 
 
+def _gam(c: float) -> float:
+    return ((c + 0.055) / 1.055) ** 2.4 if c > 0.04045 else c / 12.92
+
+
+def rgb_to_xy(r: float, g: float, b: float) -> tuple[float, float]:
+    """Standard Hue RGB -> xy chromaticity (sRGB gamma + Wide-RGB D65).
+
+    Chromaticity is scale-invariant, so callers should pass a full-brightness
+    colour and carry brightness separately for stable dimming.
+    """
+    r, g, b = _gam(r), _gam(g), _gam(b)
+    x_ = r * 0.649926 + g * 0.103455 + b * 0.197109
+    y_ = r * 0.234327 + g * 0.743075 + b * 0.022673
+    z_ = r * 0.000000 + g * 0.053077 + b * 1.035763
+    total = x_ + y_ + z_
+    if total <= 0:
+        return 0.0, 0.0
+    return x_ / total, y_ / total
+
+
 class HueStreamEncoder:
     """Builds HueStream v2 datagrams for an entertainment configuration.
 
@@ -62,7 +80,7 @@ class HueStreamEncoder:
         then per channel:       <channel id> + 3x uint16 big-endian
     """
 
-    def __init__(self, config_id: str, colorspace: int = ColorSpaceRGB) -> None:
+    def __init__(self, config_id: str, colorspace: int = ColorSpaceXYB) -> None:
         raw = config_id.encode("ascii", "ignore")
         if len(raw) != 36:
             # The HueStream v2 id field is a fixed 36 bytes; pad/truncate rather
@@ -76,25 +94,27 @@ class HueStreamEncoder:
         self._colorspace = colorspace
         self._seq = 0
 
-    def _header(self) -> bytearray:
+    def _header(self, colorspace: int) -> bytearray:
         self._seq = (self._seq + 1) & 0xFF
         header = bytearray()
         header += HUE_STREAM_PROTOCOL
         header += HUE_STREAM_VERSION
         header.append(self._seq)
         header += b"\x00\x00"  # reserved
-        header.append(self._colorspace)
+        header.append(colorspace)
         header.append(0x00)  # reserved
         header += self._config_id
         return header
 
-    def build_frame(self, channels: Iterable[tuple[int, int, int, int]]) -> bytes:
+    def build_frame(
+        self, channels: Iterable[tuple[int, int, int, int]], colorspace: int | None = None
+    ) -> bytes:
         """Encode one frame.
 
         ``channels`` yields ``(channel_id, c0, c1, c2)`` where the three colour
-        values are 16-bit ints (R,G,B for RGB colourspace).
+        values are 16-bit ints (R,G,B for RGB, or X,Y,Brightness for xy).
         """
-        frame = self._header()
+        frame = self._header(self._colorspace if colorspace is None else colorspace)
         for channel_id, c0, c1, c2 in channels:
             frame.append(channel_id & 0xFF)
             frame += int(c0).to_bytes(2, "big")
@@ -105,28 +125,62 @@ class HueStreamEncoder:
     def build_frame_rgb(self, channels: Mapping[int, tuple[float, float, float]]) -> bytes:
         """Encode a frame from normalised 0.0-1.0 RGB tuples keyed by channel id."""
         return self.build_frame(
-            (cid, float_to_16(r), float_to_16(g), float_to_16(b))
-            for cid, (r, g, b) in channels.items()
+            (
+                (cid, float_to_16(r), float_to_16(g), float_to_16(b))
+                for cid, (r, g, b) in channels.items()
+            ),
+            ColorSpaceRGB,
         )
+
+    def build_frame_xy(self, channels: Mapping[int, tuple[float, float, float]]) -> bytes:
+        """Encode a frame as xy + brightness from normalised RGB tuples.
+
+        Brightness is taken as the colour's value (max channel) and sent on its
+        own 16-bit channel, while chromaticity is computed from the full-bright
+        colour so it stays constant as brightness changes. This is how native
+        Hue (and the Spotify/Samsung integrations) dim smoothly — the bridge maps
+        the dedicated brightness through the bulb's own dimming curve instead of
+        us shrinking RGB magnitudes into the bridge's coarse low-value range.
+        """
+        def encode(r: float, g: float, b: float) -> tuple[int, int, int]:
+            bri = max(r, g, b)
+            if bri <= 1e-6:
+                return 0, 0, 0
+            x, y = rgb_to_xy(r / bri, g / bri, b / bri)
+            return float_to_16(x), float_to_16(y), float_to_16(bri)
+
+        return self.build_frame(
+            ((cid, *encode(r, g, b)) for cid, (r, g, b) in channels.items()),
+            ColorSpaceXYB,
+        )
+
+    def build(self, channels: Mapping[int, tuple[float, float, float]]) -> bytes:
+        """Encode a frame using the encoder's configured colourspace."""
+        if self._colorspace == ColorSpaceXYB:
+            return self.build_frame_xy(channels)
+        return self.build_frame_rgb(channels)
 
 
 class DtlsStream:
-    """Async DTLS streaming channel to the bridge via the ``openssl`` CLI."""
+    """Async DTLS streaming channel backed by the pure-Python PSK client.
+
+    The :class:`~.dtls.DtlsPskClient` is synchronous (blocking UDP socket); its
+    handshake and per-frame sends are dispatched to the default executor so the
+    event loop is never blocked.
+    """
 
     def __init__(
         self,
         host: str,
         app_key: str,
         client_key: str,
-        openssl_bin: str = "openssl",
         port: int = HUE_DTLS_PORT,
     ) -> None:
         self._host = host
         self._app_key = app_key
         self._client_key = client_key  # hex string
-        self._openssl = openssl_bin
         self._port = port
-        self._proc: asyncio.subprocess.Process | None = None
+        self._client: DtlsPskClient | None = None
         self._keepalive_task: asyncio.Task | None = None
         self._last_frame: bytes | None = None
         self._write_lock = asyncio.Lock()
@@ -134,62 +188,39 @@ class DtlsStream:
 
     @property
     def connected(self) -> bool:
-        return self._proc is not None and self._proc.returncode is None
+        return self._client is not None and not self._closed
 
-    async def start(self, *, handshake_timeout: float = 8.0) -> None:
-        """Spawn openssl and wait for the DTLS handshake to settle."""
-        args = [
-            self._openssl,
-            "s_client",
-            "-dtls1_2",
-            "-cipher",
-            _CIPHER,
-            "-psk_identity",
-            self._app_key,
-            "-psk",
-            self._client_key,
-            "-connect",
-            f"{self._host}:{self._port}",
-            "-quiet",
-        ]
-        _LOGGER.debug("Starting DTLS via: %s s_client ... %s:%s", self._openssl, self._host, self._port)
+    async def start(self) -> None:
+        """Open the UDP socket and perform the DTLS handshake (in executor)."""
         try:
-            self._proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except FileNotFoundError as err:
+            psk = bytes.fromhex(self._client_key)
+        except ValueError as err:
+            raise ConnectionError(f"clientkey is not valid hex: {err}") from err
+
+        client = DtlsPskClient(self._host, self._port, self._app_key.encode(), psk)
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, client.connect)
+        except (DtlsError, OSError) as err:
             raise ConnectionError(
-                f"'{self._openssl}' not found; the openssl CLI is required for "
-                "Hue Entertainment DTLS streaming"
+                f"DTLS handshake to {self._host}:{self._port} failed: {err}"
             ) from err
-
-        # openssl is quiet on success; a fast exit means the handshake failed.
-        try:
-            await asyncio.wait_for(self._proc.wait(), timeout=1.5)
-        except asyncio.TimeoutError:
-            pass  # still running -> handshake presumed up
-        else:
-            err = b""
-            if self._proc.stderr is not None:
-                err = await self._proc.stderr.read()
-            raise ConnectionError(
-                f"openssl DTLS handshake to {self._host}:{self._port} failed "
-                f"(exit {self._proc.returncode}): {err.decode(errors='replace').strip()}"
-            )
-
+        self._client = client
+        self._closed = False
         self._keepalive_task = asyncio.ensure_future(self._keepalive_loop())
 
     async def send(self, frame: bytes) -> None:
         """Send one HueStream datagram."""
-        if not self.connected or self._proc is None or self._proc.stdin is None:
+        client = self._client
+        if client is None or self._closed:
             raise ConnectionError("DTLS channel is not connected")
         async with self._write_lock:
             self._last_frame = frame
-            self._proc.stdin.write(frame)
-            await self._proc.stdin.drain()
+            loop = asyncio.get_running_loop()
+            try:
+                await loop.run_in_executor(None, client.send, frame)
+            except (DtlsError, OSError) as err:
+                raise ConnectionError(f"DTLS send failed: {err}") from err
 
     async def _keepalive_loop(self) -> None:
         """Resend the last frame if idle, so the bridge keeps the channel open."""
@@ -210,19 +241,11 @@ class DtlsStream:
         if self._keepalive_task is not None:
             self._keepalive_task.cancel()
             self._keepalive_task = None
-        proc = self._proc
-        self._proc = None
-        if proc is None:
-            return
-        try:
-            if proc.returncode is None:
-                if proc.stdin is not None:
-                    proc.stdin.close()
-                proc.terminate()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=2.0)
-                except asyncio.TimeoutError:
-                    proc.kill()
-                    await proc.wait()
-        except ProcessLookupError:
-            pass
+        client = self._client
+        self._client = None
+        if client is not None:
+            loop = asyncio.get_running_loop()
+            try:
+                await loop.run_in_executor(None, client.close)
+            except OSError:
+                pass

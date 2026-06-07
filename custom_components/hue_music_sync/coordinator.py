@@ -25,18 +25,16 @@ from .audio.source import MusicAssistantSource
 from .color.album_art import extract_palette
 from .const import (
     CONF_AREAS,
-    CONF_COLOR_SCHEME,
-    CONF_EFFECT_MODE,
-    CONF_INTENSITY,
+    CONF_COLOUR,
     CONF_LATENCY_MS,
     CONF_MEDIA_PLAYER,
-    DEFAULT_COLOR_SCHEME,
-    DEFAULT_EFFECT_MODE,
-    DEFAULT_INTENSITY,
+    CONF_MODE,
+    DEFAULT_COLOUR,
     DEFAULT_LATENCY_MS,
+    DEFAULT_MODE,
     DEFAULT_STREAM_FPS,
     ColorScheme,
-    EffectMode,
+    SyncMode,
     signal_area_update,
 )
 from .effects.engine import EffectEngine
@@ -51,31 +49,38 @@ _IDLE_REOPEN_S = 2.0
 
 @dataclass(slots=True)
 class AreaSettings:
-    """User-tunable per-area settings (persisted in config entry options)."""
+    """Per-area settings. The user only picks a ``mode``; scheme/effect/intensity
+    are derived from the preset, keeping the UI Samsung-simple. ``media_player``
+    and ``latency_ms`` are advanced options (auto/default by default)."""
 
+    mode: SyncMode = DEFAULT_MODE
+    colour: ColorScheme = DEFAULT_COLOUR
     media_player: str | None = None
-    color_scheme: ColorScheme = DEFAULT_COLOR_SCHEME
-    effect_mode: EffectMode = DEFAULT_EFFECT_MODE
     latency_ms: int = DEFAULT_LATENCY_MS
-    intensity: float = DEFAULT_INTENSITY
 
     @classmethod
     def from_dict(cls, data: dict) -> AreaSettings:
+        try:
+            mode = SyncMode(data.get(CONF_MODE, DEFAULT_MODE))
+        except ValueError:
+            mode = DEFAULT_MODE
+        try:
+            colour = ColorScheme(data.get(CONF_COLOUR, DEFAULT_COLOUR))
+        except ValueError:
+            colour = DEFAULT_COLOUR
         return cls(
+            mode=mode,
+            colour=colour,
             media_player=data.get(CONF_MEDIA_PLAYER),
-            color_scheme=ColorScheme(data.get(CONF_COLOR_SCHEME, DEFAULT_COLOR_SCHEME)),
-            effect_mode=EffectMode(data.get(CONF_EFFECT_MODE, DEFAULT_EFFECT_MODE)),
             latency_ms=int(data.get(CONF_LATENCY_MS, DEFAULT_LATENCY_MS)),
-            intensity=float(data.get(CONF_INTENSITY, DEFAULT_INTENSITY)),
         )
 
     def to_dict(self) -> dict:
         return {
+            CONF_MODE: str(self.mode),
+            CONF_COLOUR: str(self.colour),
             CONF_MEDIA_PLAYER: self.media_player,
-            CONF_COLOR_SCHEME: str(self.color_scheme),
-            CONF_EFFECT_MODE: str(self.effect_mode),
             CONF_LATENCY_MS: self.latency_ms,
-            CONF_INTENSITY: self.intensity,
         }
 
 
@@ -117,9 +122,8 @@ class SyncSession:
         return self._settings
 
     async def start(self) -> None:
-        self._apply_static_palette()
-        self._engine.set_mode(self._settings.effect_mode)
-        self._engine.set_intensity(self._settings.intensity)
+        self._engine.set_mode(self._settings.mode)
+        self._apply_colour()
         await self._bridge.start_stream(self._config.id)
         try:
             await self._stream.start()
@@ -135,24 +139,25 @@ class SyncSession:
         """Live-apply changed settings to the running session."""
         prev = self._settings
         self._settings = settings
-        self._engine.set_mode(settings.effect_mode)
-        self._engine.set_intensity(settings.intensity)
-        if settings.color_scheme != prev.color_scheme:
-            self._apply_static_palette()
-            self._last_track = None  # force album-art refresh if needed
+        self._engine.set_mode(settings.mode)
+        if settings.colour != prev.colour:
+            self._apply_colour()
+            self._last_track = None  # re-extract album art if switching to Album
         if self._source is not None and settings.media_player != prev.media_player:
             # Player changed: drop current source so the loop re-opens it.
             self._hass.async_create_task(self._reset_source())
+
+    def _apply_colour(self) -> None:
+        # Preset themes are static palettes; Album uses the engine fallback until
+        # album art is extracted for the current track.
+        if self._settings.colour != ColorScheme.ALBUM_ART:
+            self._engine.set_scheme(self._settings.colour)
 
     async def _reset_source(self) -> None:
         if self._source is not None:
             await self._source.close()
             self._source = None
         self._last_track = None
-
-    def _apply_static_palette(self) -> None:
-        if self._settings.color_scheme != ColorScheme.ALBUM_ART:
-            self._engine.set_scheme(self._settings.color_scheme)
 
     def _resolve_player(self) -> str | None:
         if self._settings.media_player:
@@ -235,7 +240,7 @@ class SyncSession:
         await self._safe_send(colors)
 
     async def _safe_send(self, colors: dict[int, tuple[float, float, float]]) -> None:
-        frame = self._encoder.build_frame_rgb(colors)
+        frame = self._encoder.build(colors)
         try:
             await self._stream.send(frame)
         except ConnectionError:
@@ -243,7 +248,8 @@ class SyncSession:
             self._running = False
 
     def _maybe_refresh_album_art(self) -> None:
-        if self._settings.color_scheme != ColorScheme.ALBUM_ART or self._source is None:
+        # Only when the Album colour is selected; preset themes are static.
+        if self._settings.colour != ColorScheme.ALBUM_ART or self._source is None:
             return
         track = self._source.track_id
         if track == self._last_track:
@@ -258,7 +264,7 @@ class SyncSession:
 
     async def _extract_art(self, url: str) -> None:
         palette = await extract_palette(self._ffmpeg, url)
-        if palette is not None and self._settings.color_scheme == ColorScheme.ALBUM_ART:
+        if palette is not None and self._settings.colour == ColorScheme.ALBUM_ART:
             self._engine.set_palette(palette)
 
     async def stop(self) -> None:

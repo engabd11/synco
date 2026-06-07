@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import shutil
 import ssl
 
 import voluptuous as vol
@@ -18,14 +17,14 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import (
     CONF_APP_KEY,
     CONF_CLIENT_KEY,
-    CONF_COLOR_SCHEME,
-    CONF_EFFECT_MODE,
+    CONF_COLOUR,
     CONF_HOST,
     CONF_MEDIA_PLAYER,
+    CONF_MODE,
     DOMAIN,
     PLATFORMS,
     ColorScheme,
-    EffectMode,
+    SyncMode,
 )
 from .coordinator import SyncManager
 from .hue.bridge import HueBridge, HueBridgeError
@@ -62,11 +61,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN].setdefault(DATA_AREA_INDEX, {})
 
-    if shutil.which("openssl") is None:
-        _LOGGER.warning(
-            "openssl CLI not found on PATH; Hue Entertainment DTLS streaming will "
-            "fail to start until it is available"
-        )
     if "music_assistant" not in hass.config.components:
         _LOGGER.warning(
             "Music Assistant integration not detected; music sync needs it to "
@@ -127,10 +121,10 @@ def _register_services(hass: HomeAssistant) -> None:
 
     def _overrides(call: ServiceCall) -> dict:
         changes: dict = {}
-        if CONF_COLOR_SCHEME in call.data:
-            changes["color_scheme"] = ColorScheme(call.data[CONF_COLOR_SCHEME])
-        if CONF_EFFECT_MODE in call.data:
-            changes["effect_mode"] = EffectMode(call.data[CONF_EFFECT_MODE])
+        if CONF_MODE in call.data:
+            changes["mode"] = SyncMode(call.data[CONF_MODE])
+        if CONF_COLOUR in call.data:
+            changes["colour"] = ColorScheme(call.data[CONF_COLOUR])
         if CONF_MEDIA_PLAYER in call.data:
             changes["media_player"] = call.data[CONF_MEDIA_PLAYER]
         return changes
@@ -152,8 +146,8 @@ def _register_services(hass: HomeAssistant) -> None:
                 await manager.update_settings(area_id, **changes)
 
     options_fields = {
-        vol.Optional(CONF_COLOR_SCHEME): vol.In([str(s) for s in ColorScheme]),
-        vol.Optional(CONF_EFFECT_MODE): vol.In([str(m) for m in EffectMode]),
+        vol.Optional(CONF_MODE): vol.In([str(m) for m in SyncMode]),
+        vol.Optional(CONF_COLOUR): vol.In([str(c) for c in ColorScheme]),
         vol.Optional(CONF_MEDIA_PLAYER): cv.entity_id,
     }
     activate_schema = vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_ids, **options_fields})

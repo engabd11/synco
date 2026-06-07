@@ -31,10 +31,9 @@ the area and the frequency band it represents.
   created in the Hue app. (The round v1 bridge does not support entertainment
   streaming.)
 - **Music Assistant** running and connected to Home Assistant.
-- Home Assistant with the bundled **ffmpeg** and **numpy** (standard on HAOS,
-  Container and Supervised installs).
-- The **`openssl`** CLI on the host running Home Assistant (present in the HAOS /
-  HA container image). Used for the DTLS channel to the bridge.
+- Home Assistant with the bundled **ffmpeg**, **numpy** and **cryptography**
+  (all standard on HAOS, Container and Supervised installs). No external `openssl`
+  binary is required — the DTLS channel is implemented in pure Python.
 
 ## Installation (HACS custom repository)
 
@@ -46,21 +45,38 @@ the area and the frequency band it represents.
 
 (Alternatively copy `custom_components/hue_music_sync/` into your HA `config/custom_components/` folder.)
 
-Each enabled area becomes a device with one **switch** plus several
-configuration entities (filed under the device's *Configuration* section):
+Each enabled area becomes a device with just a switch and two pickers — kept
+deliberately Samsung-simple:
 
 | Entity | Purpose |
 | --- | --- |
 | `switch.music_sync_<area>` | Activate / deactivate sync |
-| `select` Colour scheme | `album_art`, `warm`, `cool`, `neon`, `party`, `mono`, `rainbow` |
-| `select` Effect mode | `pulse`, `spectrum`, `wave`, `ambient` |
-| `select` Follow player | `auto` (first playing) or a specific media player |
-| `number` Latency offset | Shift lights vs. audio (ms) to match what you hear |
-| `number` Intensity | Overall brightness scaling |
+| `select` Mode | Intensity / rhythm: `Subtle`, `Medium`, `High`, `Intense` |
+| `select` Colour | `Album colours` or a preset theme (Warm/Cool/Neon/Party/Mono/Rainbow) |
+
+**Mode** controls only *how the lights move* — how much they dim and how hard
+they react to the beat — independent of colour:
+
+- **Subtle** — no dimming; colours just drift slowly.
+- **Medium** — stays bright; some lights pulse brighter on the beat.
+- **High** — dims no lower than ~30%, with bright bass + treble beats.
+- **Intense** — full 0–100% dimming/brightening with treble shimmer.
+
+**Colour** picks the palette independently — the current album art, or a preset
+mixed-colour theme. The followed media player auto-detects the one that's
+playing (override via the `activate` service if needed).
 
 > **One area at a time per bridge.** A Hue bridge can stream to only one
 > entertainment area at a time. Activating a second area on the same bridge
 > automatically takes over from the one already running.
+
+### Smooth dimming
+
+Colour is streamed in Hue's native **xy chromaticity + a dedicated brightness
+channel** (HueStream colourspace `0x01`) at ~40 Hz, the same model the official
+Spotify/Samsung integrations use. Keeping brightness on its own channel (instead
+of shrinking RGB magnitudes) lets the bridge map dimming through the bulb's own
+smooth curve, so fades don't step at the low end.
 
 ## Usage
 
@@ -83,17 +99,16 @@ automation:
         target:
           entity_id: switch.music_sync_living_room
         data:
-          color_scheme: album_art
-          effect_mode: spectrum
+          mode: album
 ```
 
 ## Services
 
 | Service | What it does |
 | --- | --- |
-| `hue_music_sync.activate` | Start sync for the targeted area(s); optionally set `color_scheme`, `effect_mode`, `media_player` first |
+| `hue_music_sync.activate` | Start sync for the targeted area(s); optionally set `mode` / `media_player` first |
 | `hue_music_sync.deactivate` | Stop sync for the targeted area(s) |
-| `hue_music_sync.set_options` | Change `color_scheme` / `effect_mode` / `media_player` **live**, without restarting sync — e.g. switch the vibe mid-song |
+| `hue_music_sync.set_options` | Change `mode` / `media_player` **live**, without restarting sync — e.g. switch the vibe mid-song |
 
 All three target the area's `switch` entity. Example — go full party on the drop:
 
@@ -102,19 +117,15 @@ All three target the area's `switch` entity. Example — go full party on the dr
   target:
     entity_id: switch.music_sync_living_room
   data:
-    color_scheme: party
-    effect_mode: pulse
+    mode: party
 ```
 
-## Effect modes
+## Choreography
 
-- **Spectrum** — each light owns a frequency band by its left-to-right position;
-  bass lights react to bass, treble lights to highs. Each light gets its own
-  palette colour.
-- **Pulse** — the whole area pulses on the beat through a slowly rotating palette
-  colour (spread spatially so lights differ).
-- **Wave** — a wavefront sweeps across the area on the beat; speed tracks tempo.
-- **Ambient** — slow palette drift with gentle energy modulation; no hard beats.
+Within any mode, lights are driven per-channel by **spatial position** and
+**frequency band**: lights are ordered left-to-right and mapped across the
+spectrum, so bass-side lights thump on the kick while treble-side lights react
+to highs — they don't all behave or colour the same.
 
 ## Validation spikes
 
@@ -159,9 +170,10 @@ the analyzer's beat detection.
 - Perfect lip-sync is not possible due to player buffering — use the latency
   offset to align by ear.
 - Requires a **v2** Hue bridge; entertainment streaming is not available on v1.
-- `python-mbedtls` has no Python 3.13 wheels, so the DTLS channel uses the
-  `openssl` CLI. If `openssl` is unavailable in your environment, streaming
-  cannot start.
+- The DTLS channel is a self-contained pure-Python DTLS 1.2 PSK implementation
+  (built on the bundled `cryptography`), since `python-mbedtls` has no modern
+  wheels and the HA container ships no `openssl` CLI. It implements exactly one
+  cipher suite (`TLS_PSK_WITH_AES_128_GCM_SHA256`) — enough for the bridge.
 
 ## License
 
