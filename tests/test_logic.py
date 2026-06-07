@@ -48,6 +48,29 @@ def test_config_id_padding_does_not_crash():
     assert len(frame[16:52]) == 36  # padded to fixed width
 
 
+def test_xy_frame_carries_dedicated_brightness():
+    # Default colourspace is xy+brightness; build() must select it.
+    enc = HueStreamEncoder(_UUID)
+    frame = enc.build({0: (0.0, 0.0, 1.0)})  # full-bright blue
+    assert frame[14] == 0x01  # colourspace byte = xy+brightness
+    # Channel 0: x, y, brightness (each uint16). Brightness for full value = max.
+    x = int.from_bytes(frame[53:55], "big") / 65535
+    y = int.from_bytes(frame[55:57], "big") / 65535
+    bri = int.from_bytes(frame[57:59], "big") / 65535
+    assert bri == 1.0  # dedicated brightness, not derived from shrinking RGB
+    assert abs(x - 0.157) < 0.01 and abs(y - 0.018) < 0.01  # Hue blue chromaticity
+
+
+def test_xy_dimming_keeps_chromaticity_constant():
+    enc = HueStreamEncoder(_UUID)
+    full = enc.build({0: (0.0, 0.0, 1.0)})
+    dim = enc.build({0: (0.0, 0.0, 0.2)})  # same hue, dimmer
+    fx, fy = full[53:55], full[55:57]
+    dx, dy = dim[53:55], dim[55:57]
+    assert (fx, fy) == (dx, dy)  # chromaticity unchanged while dimming
+    assert int.from_bytes(dim[57:59], "big") / 65535 == pytest.approx(0.2, abs=0.001)
+
+
 # --- palette -------------------------------------------------------------
 
 def test_palette_sample_is_cyclic():

@@ -45,21 +45,30 @@ the area and the frequency band it represents.
 
 (Alternatively copy `custom_components/hue_music_sync/` into your HA `config/custom_components/` folder.)
 
-Each enabled area becomes a device with one **switch** plus several
-configuration entities (filed under the device's *Configuration* section):
+Each enabled area becomes a device with just two controls — kept deliberately
+Samsung-simple:
 
 | Entity | Purpose |
 | --- | --- |
 | `switch.music_sync_<area>` | Activate / deactivate sync |
-| `select` Colour scheme | `album_art`, `warm`, `cool`, `neon`, `party`, `mono`, `rainbow` |
-| `select` Effect mode | `pulse`, `spectrum`, `wave`, `ambient` |
-| `select` Follow player | `auto` (first playing) or a specific media player |
-| `number` Latency offset | Shift lights vs. audio (ms) to match what you hear |
-| `number` Intensity | Overall brightness scaling |
+| `select` Mode | `Album colours`, `Energetic`, `Party`, `Chill` |
+
+Each **Mode** is a curated preset bundling a colour scheme, effect and intensity,
+so there are no individual scheme/effect/brightness knobs to fiddle with. The
+followed media player auto-detects the one that's playing (override via the
+`activate` service if needed).
 
 > **One area at a time per bridge.** A Hue bridge can stream to only one
 > entertainment area at a time. Activating a second area on the same bridge
 > automatically takes over from the one already running.
+
+### Smooth dimming
+
+Colour is streamed in Hue's native **xy chromaticity + a dedicated brightness
+channel** (HueStream colourspace `0x01`) at ~40 Hz, the same model the official
+Spotify/Samsung integrations use. Keeping brightness on its own channel (instead
+of shrinking RGB magnitudes) lets the bridge map dimming through the bulb's own
+smooth curve, so fades don't step at the low end.
 
 ## Usage
 
@@ -82,17 +91,16 @@ automation:
         target:
           entity_id: switch.music_sync_living_room
         data:
-          color_scheme: album_art
-          effect_mode: spectrum
+          mode: album
 ```
 
 ## Services
 
 | Service | What it does |
 | --- | --- |
-| `hue_music_sync.activate` | Start sync for the targeted area(s); optionally set `color_scheme`, `effect_mode`, `media_player` first |
+| `hue_music_sync.activate` | Start sync for the targeted area(s); optionally set `mode` / `media_player` first |
 | `hue_music_sync.deactivate` | Stop sync for the targeted area(s) |
-| `hue_music_sync.set_options` | Change `color_scheme` / `effect_mode` / `media_player` **live**, without restarting sync — e.g. switch the vibe mid-song |
+| `hue_music_sync.set_options` | Change `mode` / `media_player` **live**, without restarting sync — e.g. switch the vibe mid-song |
 
 All three target the area's `switch` entity. Example — go full party on the drop:
 
@@ -101,19 +109,21 @@ All three target the area's `switch` entity. Example — go full party on the dr
   target:
     entity_id: switch.music_sync_living_room
   data:
-    color_scheme: party
-    effect_mode: pulse
+    mode: party
 ```
 
-## Effect modes
+## Modes
 
-- **Spectrum** — each light owns a frequency band by its left-to-right position;
-  bass lights react to bass, treble lights to highs. Each light gets its own
-  palette colour.
-- **Pulse** — the whole area pulses on the beat through a slowly rotating palette
-  colour (spread spatially so lights differ).
-- **Wave** — a wavefront sweeps across the area on the beat; speed tracks tempo.
-- **Ambient** — slow palette drift with gentle energy modulation; no hard beats.
+Each mode bundles a colour scheme + choreography + intensity:
+
+- **Album colours** — palette extracted from the current album art; each light
+  owns a frequency band by its position (bass lights react to bass, treble to
+  highs). The default.
+- **Energetic** — neon palette, whole-area beat pulses.
+- **Party** — full rainbow palette with a wavefront that sweeps across the area
+  on the beat.
+- **Chill** — cool palette, slow drift with gentle energy modulation; no hard
+  beats.
 
 ## Validation spikes
 

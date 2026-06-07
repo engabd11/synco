@@ -45,6 +45,26 @@ def float_to_16(value: float) -> int:
     return int(value * 65535 + 0.5)
 
 
+def _gam(c: float) -> float:
+    return ((c + 0.055) / 1.055) ** 2.4 if c > 0.04045 else c / 12.92
+
+
+def rgb_to_xy(r: float, g: float, b: float) -> tuple[float, float]:
+    """Standard Hue RGB -> xy chromaticity (sRGB gamma + Wide-RGB D65).
+
+    Chromaticity is scale-invariant, so callers should pass a full-brightness
+    colour and carry brightness separately for stable dimming.
+    """
+    r, g, b = _gam(r), _gam(g), _gam(b)
+    x_ = r * 0.649926 + g * 0.103455 + b * 0.197109
+    y_ = r * 0.234327 + g * 0.743075 + b * 0.022673
+    z_ = r * 0.000000 + g * 0.053077 + b * 1.035763
+    total = x_ + y_ + z_
+    if total <= 0:
+        return 0.0, 0.0
+    return x_ / total, y_ / total
+
+
 class HueStreamEncoder:
     """Builds HueStream v2 datagrams for an entertainment configuration.
 
@@ -60,7 +80,7 @@ class HueStreamEncoder:
         then per channel:       <channel id> + 3x uint16 big-endian
     """
 
-    def __init__(self, config_id: str, colorspace: int = ColorSpaceRGB) -> None:
+    def __init__(self, config_id: str, colorspace: int = ColorSpaceXYB) -> None:
         raw = config_id.encode("ascii", "ignore")
         if len(raw) != 36:
             # The HueStream v2 id field is a fixed 36 bytes; pad/truncate rather
@@ -74,25 +94,27 @@ class HueStreamEncoder:
         self._colorspace = colorspace
         self._seq = 0
 
-    def _header(self) -> bytearray:
+    def _header(self, colorspace: int) -> bytearray:
         self._seq = (self._seq + 1) & 0xFF
         header = bytearray()
         header += HUE_STREAM_PROTOCOL
         header += HUE_STREAM_VERSION
         header.append(self._seq)
         header += b"\x00\x00"  # reserved
-        header.append(self._colorspace)
+        header.append(colorspace)
         header.append(0x00)  # reserved
         header += self._config_id
         return header
 
-    def build_frame(self, channels: Iterable[tuple[int, int, int, int]]) -> bytes:
+    def build_frame(
+        self, channels: Iterable[tuple[int, int, int, int]], colorspace: int | None = None
+    ) -> bytes:
         """Encode one frame.
 
         ``channels`` yields ``(channel_id, c0, c1, c2)`` where the three colour
-        values are 16-bit ints (R,G,B for RGB colourspace).
+        values are 16-bit ints (R,G,B for RGB, or X,Y,Brightness for xy).
         """
-        frame = self._header()
+        frame = self._header(self._colorspace if colorspace is None else colorspace)
         for channel_id, c0, c1, c2 in channels:
             frame.append(channel_id & 0xFF)
             frame += int(c0).to_bytes(2, "big")
@@ -103,9 +125,40 @@ class HueStreamEncoder:
     def build_frame_rgb(self, channels: Mapping[int, tuple[float, float, float]]) -> bytes:
         """Encode a frame from normalised 0.0-1.0 RGB tuples keyed by channel id."""
         return self.build_frame(
-            (cid, float_to_16(r), float_to_16(g), float_to_16(b))
-            for cid, (r, g, b) in channels.items()
+            (
+                (cid, float_to_16(r), float_to_16(g), float_to_16(b))
+                for cid, (r, g, b) in channels.items()
+            ),
+            ColorSpaceRGB,
         )
+
+    def build_frame_xy(self, channels: Mapping[int, tuple[float, float, float]]) -> bytes:
+        """Encode a frame as xy + brightness from normalised RGB tuples.
+
+        Brightness is taken as the colour's value (max channel) and sent on its
+        own 16-bit channel, while chromaticity is computed from the full-bright
+        colour so it stays constant as brightness changes. This is how native
+        Hue (and the Spotify/Samsung integrations) dim smoothly — the bridge maps
+        the dedicated brightness through the bulb's own dimming curve instead of
+        us shrinking RGB magnitudes into the bridge's coarse low-value range.
+        """
+        def encode(r: float, g: float, b: float) -> tuple[int, int, int]:
+            bri = max(r, g, b)
+            if bri <= 1e-6:
+                return 0, 0, 0
+            x, y = rgb_to_xy(r / bri, g / bri, b / bri)
+            return float_to_16(x), float_to_16(y), float_to_16(bri)
+
+        return self.build_frame(
+            ((cid, *encode(r, g, b)) for cid, (r, g, b) in channels.items()),
+            ColorSpaceXYB,
+        )
+
+    def build(self, channels: Mapping[int, tuple[float, float, float]]) -> bytes:
+        """Encode a frame using the encoder's configured colourspace."""
+        if self._colorspace == ColorSpaceXYB:
+            return self.build_frame_xy(channels)
+        return self.build_frame_rgb(channels)
 
 
 class DtlsStream:

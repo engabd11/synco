@@ -25,18 +25,16 @@ from .audio.source import MusicAssistantSource
 from .color.album_art import extract_palette
 from .const import (
     CONF_AREAS,
-    CONF_COLOR_SCHEME,
-    CONF_EFFECT_MODE,
-    CONF_INTENSITY,
     CONF_LATENCY_MS,
     CONF_MEDIA_PLAYER,
-    DEFAULT_COLOR_SCHEME,
-    DEFAULT_EFFECT_MODE,
-    DEFAULT_INTENSITY,
+    CONF_MODE,
     DEFAULT_LATENCY_MS,
+    DEFAULT_MODE,
     DEFAULT_STREAM_FPS,
+    MODE_PRESETS,
     ColorScheme,
     EffectMode,
+    SyncMode,
     signal_area_update,
 )
 from .effects.engine import EffectEngine
@@ -51,31 +49,43 @@ _IDLE_REOPEN_S = 2.0
 
 @dataclass(slots=True)
 class AreaSettings:
-    """User-tunable per-area settings (persisted in config entry options)."""
+    """Per-area settings. The user only picks a ``mode``; scheme/effect/intensity
+    are derived from the preset, keeping the UI Samsung-simple. ``media_player``
+    and ``latency_ms`` are advanced options (auto/default by default)."""
 
+    mode: SyncMode = DEFAULT_MODE
     media_player: str | None = None
-    color_scheme: ColorScheme = DEFAULT_COLOR_SCHEME
-    effect_mode: EffectMode = DEFAULT_EFFECT_MODE
     latency_ms: int = DEFAULT_LATENCY_MS
-    intensity: float = DEFAULT_INTENSITY
+
+    @property
+    def color_scheme(self) -> ColorScheme:
+        return MODE_PRESETS[self.mode][0]
+
+    @property
+    def effect_mode(self) -> EffectMode:
+        return MODE_PRESETS[self.mode][1]
+
+    @property
+    def intensity(self) -> float:
+        return MODE_PRESETS[self.mode][2]
 
     @classmethod
     def from_dict(cls, data: dict) -> AreaSettings:
+        try:
+            mode = SyncMode(data.get(CONF_MODE, DEFAULT_MODE))
+        except ValueError:
+            mode = DEFAULT_MODE
         return cls(
+            mode=mode,
             media_player=data.get(CONF_MEDIA_PLAYER),
-            color_scheme=ColorScheme(data.get(CONF_COLOR_SCHEME, DEFAULT_COLOR_SCHEME)),
-            effect_mode=EffectMode(data.get(CONF_EFFECT_MODE, DEFAULT_EFFECT_MODE)),
             latency_ms=int(data.get(CONF_LATENCY_MS, DEFAULT_LATENCY_MS)),
-            intensity=float(data.get(CONF_INTENSITY, DEFAULT_INTENSITY)),
         )
 
     def to_dict(self) -> dict:
         return {
+            CONF_MODE: str(self.mode),
             CONF_MEDIA_PLAYER: self.media_player,
-            CONF_COLOR_SCHEME: str(self.color_scheme),
-            CONF_EFFECT_MODE: str(self.effect_mode),
             CONF_LATENCY_MS: self.latency_ms,
-            CONF_INTENSITY: self.intensity,
         }
 
 
@@ -235,7 +245,7 @@ class SyncSession:
         await self._safe_send(colors)
 
     async def _safe_send(self, colors: dict[int, tuple[float, float, float]]) -> None:
-        frame = self._encoder.build_frame_rgb(colors)
+        frame = self._encoder.build(colors)
         try:
             await self._stream.send(frame)
         except ConnectionError:

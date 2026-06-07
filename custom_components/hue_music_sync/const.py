@@ -15,16 +15,14 @@ CONF_CLIENT_KEY: Final = "client_key"  # PSK for DTLS, hex string
 CONF_AREAS: Final = "areas"  # list of enabled entertainment_configuration ids
 
 # --- Per-area option keys ------------------------------------------------
+CONF_MODE: Final = "mode"
 CONF_MEDIA_PLAYER: Final = "media_player"
-CONF_COLOR_SCHEME: Final = "color_scheme"
-CONF_EFFECT_MODE: Final = "effect_mode"
 CONF_LATENCY_MS: Final = "latency_ms"
-CONF_INTENSITY: Final = "intensity"
 
 # --- Defaults ------------------------------------------------------------
 DEFAULT_LATENCY_MS: Final = 150
 DEFAULT_INTENSITY: Final = 1.0
-DEFAULT_STREAM_FPS: Final = 50  # Hue entertainment recommended max ~50-60 Hz
+DEFAULT_STREAM_FPS: Final = 40  # Hue sweet spot; bulbs update ~12.5Hz, bridge eases
 DEFAULT_NAME: Final = "hue_music_sync#ha"
 
 # Hue entertainment streaming
@@ -75,7 +73,31 @@ class EffectMode(StrEnum):
 DEFAULT_COLOR_SCHEME: Final = ColorScheme.ALBUM_ART
 DEFAULT_EFFECT_MODE: Final = EffectMode.SPECTRUM
 
-PLATFORMS: Final = ["switch", "select", "number"]
+
+class SyncMode(StrEnum):
+    """Curated, Samsung-style presets bundling scheme + effect + intensity.
+
+    Keeps the user-facing surface to a single choice instead of separate
+    colour-scheme / effect / intensity controls.
+    """
+
+    ALBUM = "album"
+    ENERGETIC = "energetic"
+    PARTY = "party"
+    CHILL = "chill"
+
+
+# mode -> (colour scheme, effect mode, intensity)
+MODE_PRESETS: Final[dict[SyncMode, tuple[ColorScheme, EffectMode, float]]] = {
+    SyncMode.ALBUM: (ColorScheme.ALBUM_ART, EffectMode.SPECTRUM, 1.0),
+    SyncMode.ENERGETIC: (ColorScheme.NEON, EffectMode.PULSE, 1.1),
+    SyncMode.PARTY: (ColorScheme.PARTY, EffectMode.WAVE, 1.1),
+    SyncMode.CHILL: (ColorScheme.COOL, EffectMode.AMBIENT, 0.7),
+}
+
+DEFAULT_MODE: Final = SyncMode.ALBUM
+
+PLATFORMS: Final = ["switch", "select"]
 
 
 def signal_area_update(area_id: str) -> str:

@@ -41,37 +41,14 @@
   },
   "entity": {
     "select": {
-      "color_scheme": {
-        "name": "Colour scheme",
+      "mode": {
+        "name": "Mode",
         "state": {
-          "album_art": "Album art",
-          "warm": "Warm",
-          "cool": "Cool",
-          "neon": "Neon",
+          "album": "Album colours",
+          "energetic": "Energetic",
           "party": "Party",
-          "mono": "Mono",
-          "rainbow": "Rainbow"
+          "chill": "Chill"
         }
-      },
-      "effect_mode": {
-        "name": "Effect mode",
-        "state": {
-          "pulse": "Pulse",
-          "spectrum": "Spectrum",
-          "wave": "Wave",
-          "ambient": "Ambient"
-        }
-      },
-      "media_player": {
-        "name": "Follow player"
-      }
-    },
-    "number": {
-      "latency": {
-        "name": "Latency offset"
-      },
-      "intensity": {
-        "name": "Intensity"
       }
     }
   },
@@ -80,13 +57,9 @@
       "name": "Activate music sync",
       "description": "Start music sync for one or more entertainment areas.",
       "fields": {
-        "color_scheme": {
-          "name": "Colour scheme",
-          "description": "Colour scheme to use."
-        },
-        "effect_mode": {
-          "name": "Effect mode",
-          "description": "Choreography mode."
+        "mode": {
+          "name": "Mode",
+          "description": "Sync mode preset to use."
         },
         "media_player": {
           "name": "Media player",
@@ -100,15 +73,11 @@
     },
     "set_options": {
       "name": "Set music sync options",
-      "description": "Change colour scheme, effect mode or followed player live without restarting sync.",
+      "description": "Change the mode or followed player live without restarting sync.",
       "fields": {
-        "color_scheme": {
-          "name": "Colour scheme",
-          "description": "Colour scheme to use."
-        },
-        "effect_mode": {
-          "name": "Effect mode",
-          "description": "Choreography mode."
+        "mode": {
+          "name": "Mode",
+          "description": "Sync mode preset to use."
         },
         "media_player": {
           "name": "Media player",
