@@ -24,7 +24,9 @@ from .const import (
     CONF_BRIDGE_ID,
     CONF_CLIENT_KEY,
     CONF_HOST,
+    CONF_RESTORE_LIGHTS,
     CONF_SNAPSERVER_HOST,
+    DEFAULT_RESTORE_LIGHTS,
     DOMAIN,
 )
 from .hue.bridge import (
@@ -163,6 +165,9 @@ class HueMusicSyncOptionsFlow(OptionsFlow):
             self.hass.config_entries.async_update_entry(entry, data=new_data)
             new_options = dict(entry.options)
             new_options[CONF_SNAPSERVER_HOST] = user_input.get(CONF_SNAPSERVER_HOST, "").strip()
+            new_options[CONF_RESTORE_LIGHTS] = user_input.get(
+                CONF_RESTORE_LIGHTS, DEFAULT_RESTORE_LIGHTS
+            )
             self.hass.config_entries.async_update_entry(entry, options=new_options)
             self.hass.async_create_task(
                 self.hass.config_entries.async_reload(entry.entry_id)
@@ -180,6 +185,12 @@ class HueMusicSyncOptionsFlow(OptionsFlow):
                         CONF_SNAPSERVER_HOST,
                         default=entry.options.get(CONF_SNAPSERVER_HOST, ""),
                     ): str,
+                    vol.Optional(
+                        CONF_RESTORE_LIGHTS,
+                        default=entry.options.get(
+                            CONF_RESTORE_LIGHTS, DEFAULT_RESTORE_LIGHTS
+                        ),
+                    ): bool,
                 }
             ),
         )

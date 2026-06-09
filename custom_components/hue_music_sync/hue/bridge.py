@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
@@ -12,6 +13,40 @@ from ..const import DEFAULT_NAME
 _LOGGER = logging.getLogger(__name__)
 
 _API_TIMEOUT = aiohttp.ClientTimeout(total=10)
+
+
+def capture_light_state(light: dict) -> dict:
+    """Snapshot the restorable state of a CLIP v2 light resource.
+
+    Keeps on/off and brightness, and exactly one colour mode — the colour
+    temperature if the light is currently in white/CT mode, otherwise its xy
+    chromaticity — so the light can be put back exactly as it was.
+    """
+    state: dict = {"id": light["id"], "on": light.get("on", {}).get("on", True)}
+    brightness = light.get("dimming", {}).get("brightness")
+    if brightness is not None:
+        state["brightness"] = brightness
+    ct = light.get("color_temperature") or {}
+    mirek = ct.get("mirek")
+    if mirek is not None:
+        state["mirek"] = mirek  # light was in CT/white mode
+    else:
+        xy = light.get("color", {}).get("xy")
+        if xy is not None:
+            state["xy"] = xy
+    return state
+
+
+def restore_light_body(state: dict) -> dict:
+    """Build the CLIP v2 PUT body that puts a light back to a captured state."""
+    body: dict = {"on": {"on": state["on"]}}
+    if "brightness" in state:
+        body["dimming"] = {"brightness": state["brightness"]}
+    if "mirek" in state:
+        body["color_temperature"] = {"mirek": state["mirek"]}
+    elif "xy" in state:
+        body["color"] = {"xy": state["xy"]}
+    return body
 
 
 class LinkButtonNotPressed(Exception):
@@ -160,3 +195,72 @@ class HueBridge:
     async def stop_stream(self, config_id: str) -> None:
         """Return control of the area to the bridge (restores prior light state)."""
         await self._set_action(config_id, "stop")
+
+    async def _put(self, path: str, body: dict) -> None:
+        async with self._session.put(
+            self._url(path), headers=self._headers, json=body,
+            ssl=self._ssl, timeout=_API_TIMEOUT,
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json(content_type=None)
+        if data.get("errors"):
+            raise HueBridgeError(str(data["errors"]))
+
+    async def _area_light_rids(self, config_id: str) -> set[str]:
+        """Resolve the light resource ids that belong to an entertainment area."""
+        items = await self._get(f"entertainment_configuration/{config_id}")
+        item = items[0] if items else {}
+        # Some bridges still expose the direct (deprecated) light_services list.
+        rids = {
+            s["rid"]
+            for s in item.get("light_services", [])
+            if s.get("rtype") == "light"
+        }
+        if rids:
+            return rids
+        # Otherwise map channel members -> entertainment services -> owner
+        # devices -> the light service on each device.
+        ent_rids = {
+            m["service"]["rid"]
+            for ch in item.get("channels", [])
+            for m in ch.get("members", [])
+            if m.get("service", {}).get("rtype") == "entertainment"
+        }
+        if not ent_rids:
+            return set()
+        device_rids = {
+            e["owner"]["rid"]
+            for e in await self._get("entertainment")
+            if e.get("id") in ent_rids and e.get("owner", {}).get("rtype") == "device"
+        }
+        return {
+            light["id"]
+            for light in await self._get("light")
+            if light.get("owner", {}).get("rid") in device_rids
+        }
+
+    async def snapshot_area_lights(self, config_id: str) -> list[dict]:
+        """Capture the current state of every light in an entertainment area."""
+        rids = await self._area_light_rids(config_id)
+        if not rids:
+            return []
+        return [
+            capture_light_state(light)
+            for light in await self._get("light")
+            if light["id"] in rids
+        ]
+
+    async def restore_light_states(self, states: list[dict], passes: int = 2) -> None:
+        """Put each light back to a captured state, retrying to beat Zigbee loss.
+
+        The bridge's own restore-on-stop occasionally drops a single light's
+        command, so we re-apply our snapshot ourselves a couple of times.
+        """
+        for attempt in range(passes):
+            for state in states:
+                try:
+                    await self._put(f"light/{state['id']}", restore_light_body(state))
+                except (HueBridgeError, OSError) as err:
+                    _LOGGER.debug("Restore of light %s failed: %s", state.get("id"), err)
+            if attempt < passes - 1:
+                await asyncio.sleep(0.3)

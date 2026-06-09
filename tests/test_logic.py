@@ -18,7 +18,11 @@ from hue_music_sync.const import (
     SyncMode,
 )
 from hue_music_sync.effects.engine import EffectEngine
-from hue_music_sync.hue.bridge import EntertainmentChannel
+from hue_music_sync.hue.bridge import (
+    EntertainmentChannel,
+    capture_light_state,
+    restore_light_body,
+)
 from hue_music_sync.hue.stream import HueStreamEncoder, float_to_16, rgb8_to_16
 
 _UUID = "abcdefab-1234-1234-1234-0123456789ab"
@@ -246,6 +250,52 @@ def test_movie_warm_drift_in_quiet_moments():
     for _ in range(200):
         quiet = eng.render(AnalysisFrame(bands={"sub_bass": 0.1}, energy=0.02), 0.025)
     assert warmth(quiet) > warmth(loud) + 0.05  # quieter scenes are warmer
+
+
+# --- light snapshot / restore (opt-in restore-on-stop) -------------------
+
+def test_capture_light_state_colour_mode():
+    light = {
+        "id": "abc", "on": {"on": True}, "dimming": {"brightness": 80.0},
+        "color": {"xy": {"x": 0.3, "y": 0.4}},
+        "color_temperature": {"mirek": None},  # null => colour mode
+    }
+    assert capture_light_state(light) == {
+        "id": "abc", "on": True, "brightness": 80.0, "xy": {"x": 0.3, "y": 0.4},
+    }
+
+
+def test_capture_light_state_ct_mode_prefers_mirek():
+    light = {
+        "id": "abc", "on": {"on": True}, "dimming": {"brightness": 50.0},
+        "color": {"xy": {"x": 0.3, "y": 0.4}},
+        "color_temperature": {"mirek": 300},  # active => CT/white mode
+    }
+    state = capture_light_state(light)
+    assert state["mirek"] == 300 and "xy" not in state
+
+
+def test_capture_light_state_dimmable_only():
+    light = {"id": "x", "on": {"on": False}, "dimming": {"brightness": 10.0}}
+    assert capture_light_state(light) == {"id": "x", "on": False, "brightness": 10.0}
+
+
+def test_restore_body_round_trips_colour():
+    state = {"id": "a", "on": True, "brightness": 80.0, "xy": {"x": 0.3, "y": 0.4}}
+    assert restore_light_body(state) == {
+        "on": {"on": True},
+        "dimming": {"brightness": 80.0},
+        "color": {"xy": {"x": 0.3, "y": 0.4}},
+    }
+
+
+def test_restore_body_ct_and_off():
+    state = {"id": "a", "on": False, "brightness": 5.0, "mirek": 300}
+    assert restore_light_body(state) == {
+        "on": {"on": False},
+        "dimming": {"brightness": 5.0},
+        "color_temperature": {"mirek": 300},
+    }
 
 
 # --- album-art k-means ---------------------------------------------------

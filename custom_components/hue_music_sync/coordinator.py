@@ -37,6 +37,7 @@ from .const import (
     CONF_LATENCY_MS,
     CONF_MEDIA_PLAYER,
     CONF_MODE,
+    CONF_RESTORE_LIGHTS,
     CONF_SNAPSERVER_HOST,
     CONF_TIMING_MS,
     DEFAULT_BRIGHTNESS,
@@ -44,6 +45,7 @@ from .const import (
     DEFAULT_EFFECT,
     DEFAULT_LATENCY_MS,
     DEFAULT_MODE,
+    DEFAULT_RESTORE_LIGHTS,
     DEFAULT_STREAM_FPS,
     DEFAULT_TIMING_MS,
     DOMAIN,
@@ -134,6 +136,7 @@ class SyncSession:
         config: EntertainmentConfig,
         settings: AreaSettings,
         snapserver_host: str = "",
+        restore_lights: bool = False,
         on_finished: Callable[[], None] | None = None,
     ) -> None:
         self._hass = hass
@@ -142,6 +145,8 @@ class SyncSession:
         self._config = config
         self._settings = settings
         self._snapserver_host = snapserver_host
+        self._restore_lights = restore_lights
+        self._light_snapshot: list[dict] | None = None
         self._on_finished = on_finished
 
         self._encoder = HueStreamEncoder(config.id)
@@ -174,6 +179,17 @@ class SyncSession:
         self._engine.set_effect(self._settings.effect)
         self._engine.set_brightness(self._settings.brightness)
         self._apply_colour()
+        # Snapshot the area's lights *before* streaming so we can restore their
+        # exact pre-sync state on stop (opt-in; covers the occasional light the
+        # bridge's own restore misses).
+        if self._restore_lights:
+            try:
+                self._light_snapshot = await self._bridge.snapshot_area_lights(
+                    self._config.id
+                )
+            except Exception as err:  # noqa: BLE001 - best-effort, never block start
+                _LOGGER.debug("Light snapshot for %s failed: %s", self._config.name, err)
+                self._light_snapshot = None
         await self._bridge.start_stream(self._config.id)
         try:
             await self._stream.start()
@@ -351,6 +367,7 @@ class SyncSession:
             await self._bridge.stop_stream(self._config.id)
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Release of %s stream failed: %s", self._config.name, err)
+        await self._restore_snapshot()
 
     async def _send_idle(self, phase: float) -> None:
         # Gentle dim glow drifting through the palette (paused / waiting for audio).
@@ -458,6 +475,21 @@ class SyncSession:
             await self._bridge.stop_stream(self._config.id)
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Error stopping bridge stream for %s: %s", self._config.name, err)
+        await self._restore_snapshot()
+
+    async def _restore_snapshot(self) -> None:
+        """Re-apply the captured pre-sync light state (opt-in; never raises)."""
+        if not self._restore_lights or not self._light_snapshot:
+            return
+        # Let the bridge's own restore-on-stop settle first, then re-apply our
+        # snapshot to fix any light it dropped.
+        await asyncio.sleep(0.4)
+        try:
+            await self._bridge.restore_light_states(self._light_snapshot)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Light restore for %s failed: %s", self._config.name, err)
+        finally:
+            self._light_snapshot = None
 
 
 class SyncManager:
@@ -484,6 +516,9 @@ class SyncManager:
         self.configs: dict[str, EntertainmentConfig] = {c.id: c for c in configs}
         self.enabled_areas: list[str] = list(entry.data.get(CONF_AREAS, []))
         self._snapserver_host: str = entry.options.get(CONF_SNAPSERVER_HOST, "") or ""
+        self._restore_lights: bool = bool(
+            entry.options.get(CONF_RESTORE_LIGHTS, DEFAULT_RESTORE_LIGHTS)
+        )
         self._sessions: dict[str, SyncSession] = {}
         self._settings: dict[str, AreaSettings] = self._load_settings()
 
@@ -552,6 +587,7 @@ class SyncManager:
             self.hass, self.bridge, self._host, self._app_key, self._client_key,
             self._ffmpeg, config, self.get_settings(area_id),
             snapserver_host=self._snapserver_host,
+            restore_lights=self._restore_lights,
             on_finished=lambda: self._on_session_finished(area_id),
         )
         await session.start()

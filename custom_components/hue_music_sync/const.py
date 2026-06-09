@@ -23,6 +23,7 @@ CONF_MEDIA_PLAYER: Final = "media_player"
 CONF_LATENCY_MS: Final = "latency_ms"
 CONF_TIMING_MS: Final = "timing_ms"
 CONF_SNAPSERVER_HOST: Final = "snapserver_host"
+CONF_RESTORE_LIGHTS: Final = "restore_lights"  # snapshot + restore light state on stop
 
 # --- Defaults ------------------------------------------------------------
 DEFAULT_LATENCY_MS: Final = 150
@@ -63,6 +64,7 @@ BANDS: Final[dict[str, tuple[float, float]]] = {
 }
 
 
+DEFAULT_RESTORE_LIGHTS: Final = False  # opt-in: restore exact pre-sync light state
 DEFAULT_BRIGHTNESS: Final = 1.0  # master brightness ceiling (0..1)
 DEFAULT_TIMING_MS: Final = 0  # +ve delays lights, -ve advances (within buffer)
 TIMING_BUFFER_MS: Final = 200  # baseline delay buffer enabling -ve offsets

@@ -36,7 +36,8 @@
         "description": "Enable areas, and optionally point at your Snapcast server for real beat-accurate audio (Music Assistant streams through Snapcast).",
         "data": {
           "areas": "Enabled entertainment areas",
-          "snapserver_host": "Snapcast server host (IP) — optional"
+          "snapserver_host": "Snapcast server host (IP) — optional",
+          "restore_lights": "Restore exact light state when sync stops"
         }
       }
     }

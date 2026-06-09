@@ -178,6 +178,16 @@ One area at a time: only a single entertainment area streams at once (a bridge
 supports one stream, and the integration enforces this across every area and
 bridge). Activating any area automatically deactivates whichever one was running.
 
+### Restoring light state on stop
+
+When sync stops, the bridge restores the lights to their pre-sync state, but it
+occasionally drops a single light's restore (a Zigbee quirk) and leaves it on its
+last colour. Enable **Restore exact light state when sync stops** in the
+integration options to have the integration snapshot each light before streaming
+and re-apply that exact state itself (with a retry) after stopping. It is off by
+default since it adds a few bridge calls on start/stop; turn it on if you see a
+light left behind.
+
 ### Smooth dimming & deterministic colour
 
 Colour is streamed in Hue's native **xy chromaticity with a dedicated
