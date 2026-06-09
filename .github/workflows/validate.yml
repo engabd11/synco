@@ -24,6 +24,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install pytest numpy
+        # numpy for the DSP; aiohttp (hue.bridge) and cryptography (hue.dtls/
+        # stream) are imported by the test modules. They're bundled by Home
+        # Assistant at runtime, so the manifest doesn't list them, but the
+        # HA-free unit tests still need them installed here.
+        run: pip install pytest numpy aiohttp cryptography
       - name: Run tests
         run: pytest tests/ -v
