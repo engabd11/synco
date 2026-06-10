@@ -506,8 +506,11 @@ class SyncSession:
                     state["media_title"] = a["media_title"]
                 if a.get("media_artist"):
                     state["media_artist"] = a["media_artist"]
+                # Deliberately NOT `entity_picture` (a reserved attribute that
+                # would replace the switch's own icon in the UI); the card reads
+                # `media_image`.
                 if a.get("entity_picture"):
-                    state["entity_picture"] = a["entity_picture"]
+                    state["media_image"] = a["entity_picture"]
                 state["source_player"] = entity_id
         return state
 
