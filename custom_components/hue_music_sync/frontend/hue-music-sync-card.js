@@ -3,13 +3,16 @@
  * A Home Assistant custom Lovelace card for the Hue Music Sync integration.
  *
  * Faithful re-implementation of the "Ambient Glow" design (Variation B):
- * immersive colour-bleed hero, ambient visualizer, Hue dark-navy theme.
+ * immersive colour-bleed hero, blurred album-art backdrop, ambient visualizer,
+ * Hue dark-navy theme.
  *
- * Single self-contained custom element — no build step. Drop into `config/www/`
- * and register as a dashboard resource. See README.md for installation + config.
+ * Bundled with and served by the integration (no separate install). Single
+ * self-contained custom element — no build step. See README.md for config.
  */
 
-const VERSION = "1.0.0";
+// Keep in lockstep with the integration's manifest.json version (the
+// integration also cache-busts this file's URL with that version).
+const VERSION = "1.3.0";
 
 /* ───────────────────────── Palette data ───────────────────────── */
 // Colour schemes from the integration, each a small gradient swatch.
