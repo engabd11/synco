@@ -22,7 +22,6 @@ False and consumers fall back to plain reactive behaviour.
 
 from __future__ import annotations
 
-import math
 from collections import deque
 from dataclasses import dataclass
 

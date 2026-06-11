@@ -547,7 +547,9 @@ class SyncSession:
         pos = attrs.get("media_position")
         if pos is None:
             return None
-        period = 60.0 / bg.bpm
+        # Fold with the *rounded* bpm we publish, so the card (which reads that
+        # integer bpm) and this anchor agree and the bars don't slowly drift.
+        period = 60.0 / max(1.0, round(bg.bpm))
         live = float(pos)
         updated = attrs.get("media_position_updated_at")
         if updated is not None:
