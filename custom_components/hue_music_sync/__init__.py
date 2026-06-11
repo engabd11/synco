@@ -104,18 +104,59 @@ async def _register_frontend_card(hass: HomeAssistant) -> None:
         except Exception:  # noqa: BLE001
             version = None
         url = f"{CARD_URL}?v={version}" if version else CARD_URL
+
+        # Two ways to load the card, so it works regardless of dashboard mode and
+        # browser/app-shell caching:
+        #  1. A Lovelace resource (storage mode) — the canonical mechanism, loaded
+        #     by the dashboard at runtime so it isn't blocked by a cached shell.
+        #  2. add_extra_js_url — covers YAML-mode dashboards.
         add_extra_js_url(hass, url)
+        if not await _register_lovelace_resource(hass, url):
+            # Lovelace not ready yet at startup; retry once HA has fully started.
+            from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+
+            async def _retry(_event) -> None:
+                await _register_lovelace_resource(hass, url)
+
+            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _retry)
         _LOGGER.info(
             "Hue Synco dashboard card registered at %s. If it doesn't appear in "
-            "the card picker, hard-refresh the browser (Ctrl+Shift+R).", url
+            "the card picker, reload the page (or clear the browser cache once).",
+            url,
         )
     except Exception:  # noqa: BLE001 - never block setup on the card
         hass.data[DOMAIN][DATA_CARD_REGISTERED] = False
         _LOGGER.warning(
             "Could not auto-register the Hue Synco dashboard card; add it manually "
-            "as a dashboard resource pointing at %s (module).", CARD_URL,
+            "as a dashboard resource pointing at %s (JavaScript Module).", CARD_URL,
             exc_info=True,
         )
+
+
+async def _register_lovelace_resource(hass: HomeAssistant, url: str) -> bool:
+    """Add (or update) the card as a Lovelace resource in storage mode.
+
+    Returns True if the resource is present afterward, False if Lovelace isn't
+    ready yet or runs in YAML mode (where resources are managed in YAML).
+    """
+    lovelace = hass.data.get("lovelace")
+    resources = getattr(lovelace, "resources", None)
+    if resources is None or not hasattr(resources, "async_create_item"):
+        return False
+    try:
+        await resources.async_get_info()  # ensure the collection is loaded
+        base = url.split("?")[0]
+        for item in resources.async_items():
+            if str(item.get("url", "")).split("?")[0] == base:
+                if item.get("url") != url:  # version changed: refresh it
+                    await resources.async_update_item(item["id"], {"url": url})
+                return True
+        await resources.async_create_item({"res_type": "module", "url": url})
+        _LOGGER.debug("Added Hue Synco card as a Lovelace resource: %s", url)
+        return True
+    except Exception:  # noqa: BLE001 - best-effort
+        _LOGGER.debug("Lovelace resource registration failed", exc_info=True)
+        return False
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

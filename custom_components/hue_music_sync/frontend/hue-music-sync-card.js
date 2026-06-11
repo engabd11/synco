@@ -1128,15 +1128,19 @@ if (!customElements.get("hue-music-sync-card")) {
   customElements.define("hue-music-sync-card", HueMusicSyncCard);
 }
 
-// Register in the dashboard card picker.
+// Register in the dashboard card picker (guarded against double-loading, since
+// the integration may expose the card via both a Lovelace resource and an extra
+// JS module).
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "hue-music-sync-card",
-  name: "Hue Synco Card",
-  description: "Ambient Glow card for the Hue Synco integration.",
-  preview: true,
-  documentationURL: "https://github.com/engabd11/synco",
-});
+if (!window.customCards.some((c) => c.type === "hue-music-sync-card")) {
+  window.customCards.push({
+    type: "hue-music-sync-card",
+    name: "Hue Synco Card",
+    description: "Ambient Glow card for the Hue Synco integration.",
+    preview: true,
+    documentationURL: "https://github.com/engabd11/synco",
+  });
+}
 
 console.info(
   `%c HUE-MUSIC-SYNC-CARD %c ${VERSION} `,
