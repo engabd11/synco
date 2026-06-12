@@ -77,6 +77,21 @@ def test_bass_beats_fire_on_kicks_not_hihats():
     assert off_kick <= 2  # hats almost never do
 
 
+def test_mid_stream_fires_on_guitar_not_kicks():
+    # 700 Hz plucks (guitar territory) drive the mid stream, not the bass one;
+    # 60 Hz kicks drive the bass stream, not the mid one.
+    seconds = 6.0
+    gtr = _kick_track(120, seconds, freq=700.0)
+    frames = _run(gtr)
+    assert sum(f.mid_beat for f in frames) >= 6
+    assert sum(f.bass_beat for f in frames) <= 1
+
+    kicks = _kick_track(120, seconds, freq=60.0)
+    frames = _run(kicks)
+    assert sum(f.bass_beat for f in frames) >= 8
+    assert sum(f.mid_beat for f in frames) <= 2  # kick splash must not count
+
+
 def test_pure_treble_bursts_do_not_drive_bass_stream():
     seconds = 5.0
     sig = np.zeros(int(_SR * seconds), dtype=np.float32)

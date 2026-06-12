@@ -41,6 +41,11 @@ class BeatGrid:
     next_beat_t: float = 0.0  # absolute t_audio of the predicted next beat
     bar_phase: float = 0.0  # position within a 4-beat bar, 0..1
     predicted_beat: bool = False  # True on the frame the beat clock ticks over
+    # Accent (0..1) of the *upcoming* beat. The track map fills this from its
+    # per-beat onset strengths so anticipatory effects (waves) can size each
+    # beat by how hard the song actually hits it; the causal tracker doesn't
+    # know the future and leaves it at full.
+    accent: float = 1.0
 
 
 _MIN_BPM = 70.0

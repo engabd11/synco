@@ -48,6 +48,9 @@ class AnalysisFrame:
     bass_flux: float = 0.0  # low-band onset strength, normalised 0..~1
     bass_beat: bool = False  # a kick/bass onset (drives visible accents)
     bass_strength: float = 0.0  # how far bass flux exceeded threshold, 0..~3
+    mid_flux: float = 0.0  # mid-band (guitar/snare) onset strength
+    mid_beat: bool = False  # a guitar/snare onset (drives mid-role lights)
+    mid_strength: float = 0.0
 
 
 # SuperFlux parameters, shared with the offline track-map analysis.
@@ -57,6 +60,7 @@ ONSET_BANDS = 36  # log-spaced filterbank bands for the onset function
 ONSET_FMIN = 40.0
 ONSET_FMAX = 11000.0
 BASS_ONSET_HZ = 200.0  # onsets below this drive the visible beat stream
+MID_ONSET_HZ = 2500.0  # bass..this = the mid (guitar/snare) onset stream
 # Absolute flux floor: the adaptive mean+k*std threshold self-normalises, so on
 # near-silent onset streams (sustained tones, vibrato residue) it would shrink
 # until numeric wobble "beats". Any real musical onset clears this easily.
@@ -66,6 +70,9 @@ MIN_ONSET_FLUX = 2.5
 # inflates small values); in linear magnitude it is negligible (~0.003 of the
 # attack) while a kick's flux is mostly bass — a clean discriminator.
 BASS_FLUX_SHARE = 0.25
+# Same idea for the guitar/snare stream: real mid-range energy, not a kick's
+# attack splash (kick frames are bass-dominant and are excluded separately).
+MID_FLUX_SHARE = 0.30
 
 
 def log_spectrum(mag: np.ndarray) -> np.ndarray:
@@ -92,13 +99,14 @@ def make_onset_filterbank(
     n_bands: int = ONSET_BANDS,
     fmin: float = ONSET_FMIN,
     fmax: float = ONSET_FMAX,
-) -> tuple[np.ndarray, np.ndarray, int]:
+) -> tuple[np.ndarray, np.ndarray, int, int]:
     """Log-spaced band aggregation for the onset function.
 
     SuperFlux runs on a coarse filterbank rather than raw FFT bins: a single
     tone's leakage skirts wobble individual bins frame-to-frame, but its *band*
-    energy stays put. Returns ``(start_indices, counts, n_bass_bands)`` where the
-    first ``n_bass_bands`` bands lie below :data:`BASS_ONSET_HZ`.
+    energy stays put. Returns ``(start_indices, counts, n_bass, n_mid)`` where
+    bands ``[0, n_bass)`` lie below :data:`BASS_ONSET_HZ` (the kick stream) and
+    bands ``[n_bass, n_mid)`` lie below :data:`MID_ONSET_HZ` (guitar/snare).
     """
     fmax = min(fmax, float(freqs[-1]))
     edges = np.geomspace(fmin, fmax, n_bands + 1)
@@ -109,8 +117,9 @@ def make_onset_filterbank(
     idx = np.minimum(idx, len(freqs) - 1)
     starts = idx[:-1]
     counts = np.maximum(1, idx[1:] - idx[:-1])
-    n_bass = int(np.sum(edges[1:] <= BASS_ONSET_HZ))
-    return starts, counts, max(1, n_bass)
+    n_bass = max(1, int(np.sum(edges[1:] <= BASS_ONSET_HZ)))
+    n_mid = max(n_bass + 1, int(np.sum(edges[1:] <= MID_ONSET_HZ)))
+    return starts, counts, n_bass, n_mid
 
 
 def band_means(mag: np.ndarray, starts: np.ndarray, counts: np.ndarray) -> np.ndarray:
@@ -169,17 +178,23 @@ class Analyzer:
         self._energy_agc = _AGC()
         self._flux_agc = _AGC()
         self._bass_flux_agc = _AGC()
+        self._mid_flux_agc = _AGC()
 
-        # Onset / beat state (broadband for tempo, bass for visible accents).
-        self._fb_starts, self._fb_counts, self._n_bass = make_onset_filterbank(freqs)
+        # Onset / beat state (broadband for tempo; bass = kicks and mid =
+        # guitar/snare for the visible accent streams).
+        self._fb_starts, self._fb_counts, self._n_bass, self._n_mid = (
+            make_onset_filterbank(freqs)
+        )
         self._prev_log: np.ndarray | None = None
         self._prev_lin: np.ndarray | None = None
         self._flux_hist: deque[float] = deque(maxlen=43)  # ~0.9s at 50 fps
         self._bass_hist: deque[float] = deque(maxlen=43)
+        self._mid_hist: deque[float] = deque(maxlen=43)
         self._sensitivity = beat_sensitivity
         self._refractory = 6  # min frames between beats (~120 ms)
         self._since_beat = self._refractory
         self._since_bass = self._refractory
+        self._since_mid = self._refractory
         self._beat_times: deque[float] = deque(maxlen=8)
         self._frame_index = 0
 
@@ -211,6 +226,7 @@ class Analyzer:
             self._prev_log = log_spectrum(self._prev_lin)
             self._since_beat += 1
             self._since_bass += 1
+            self._since_mid += 1
             t_audio = self._frame_index * self.frame_period
             self._frame_index += 1
             return AnalysisFrame(
@@ -228,11 +244,9 @@ class Analyzer:
 
         energy = self._energy_agc.normalise(rms)
 
-        beat, strength, flux_raw, bass_beat, bass_strength, bass_raw = (
-            self._detect_onsets(mag)
-        )
-        flux = self._flux_agc.normalise(flux_raw)
-        bass_flux = self._bass_flux_agc.normalise(bass_raw)
+        onsets = self._detect_onsets(mag)
+        flux = self._flux_agc.normalise(onsets["flux"])
+        bass_flux = self._bass_flux_agc.normalise(onsets["bass_flux"])
         centroid = self._spectral_centroid(mag)
         tempo = self._estimate_tempo()
         t_audio = self._frame_index * self.frame_period
@@ -241,15 +255,18 @@ class Analyzer:
         return AnalysisFrame(
             bands=bands,
             energy=energy,
-            beat=beat,
-            beat_strength=strength,
+            beat=onsets["beat"],
+            beat_strength=onsets["strength"],
             tempo_bpm=tempo,
             flux=flux,
             t_audio=t_audio,
             centroid=centroid,
             bass_flux=bass_flux,
-            bass_beat=bass_beat,
-            bass_strength=bass_strength,
+            bass_beat=onsets["bass_beat"],
+            bass_strength=onsets["bass_strength"],
+            mid_flux=self._mid_flux_agc.normalise(onsets["mid_flux"]),
+            mid_beat=onsets["mid_beat"],
+            mid_strength=onsets["mid_strength"],
         )
 
     def _spectral_centroid(self, mag: np.ndarray) -> float:
@@ -265,29 +282,39 @@ class Analyzer:
         centroid_hz = float((self._freqs * mag).sum()) / total
         return min(1.0, centroid_hz / 5000.0)
 
-    def _detect_onsets(
-        self, mag: np.ndarray
-    ) -> tuple[bool, float, float, bool, float, float]:
-        """SuperFlux onsets: (beat, strength, flux, bass_beat, bass_strength, bass_flux)."""
+    def _detect_onsets(self, mag: np.ndarray) -> dict:
+        """SuperFlux onsets on three streams: broadband (tempo), bass (kicks)
+        and mid (guitar/snare). Returned as a dict of per-stream results."""
         lin = band_means(mag, self._fb_starts, self._fb_counts)
         cur = log_spectrum(lin)
         if self._prev_log is None or self._prev_lin is None:
             self._prev_log = cur
             self._prev_lin = lin
-            return False, 0.0, 0.0, False, 0.0, 0.0
+            return {
+                "beat": False, "strength": 0.0, "flux": 0.0,
+                "bass_beat": False, "bass_strength": 0.0, "bass_flux": 0.0,
+                "mid_beat": False, "mid_strength": 0.0, "mid_flux": 0.0,
+            }
         # Broadband SuperFlux: positive increases over the frequency-max-filtered
         # previous frame (vibrato/slides produce none; real onsets do).
         diff = cur - max_filter_freq(self._prev_log)
         flux = float(np.sum(diff[diff > 0]))
-        # Bass flux: plain positive log-flux restricted to the kick/bass bands.
-        bdiff = cur[: self._n_bass] - self._prev_log[: self._n_bass]
+        # Band-limited plain positive log-flux for the kick and guitar streams.
+        nb, nm = self._n_bass, self._n_mid
+        bdiff = cur[:nb] - self._prev_log[:nb]
         bass_flux = float(np.sum(bdiff[bdiff > 0]))
-        # Linear-domain bass share of this frame's onset energy (leakage-proof).
+        mdiff = cur[nb:nm] - self._prev_log[nb:nm]
+        mid_flux = float(np.sum(mdiff[mdiff > 0]))
+        # Linear-domain band shares of this frame's onset energy (leakage-proof:
+        # log compression makes a hi-hat's splash into other bands look big).
         ldiff = lin - self._prev_lin
         lin_pos = float(np.sum(ldiff[ldiff > 0]))
-        lb = ldiff[: self._n_bass]
+        lb = ldiff[:nb]
+        lm = ldiff[nb:nm]
         lin_bass = float(np.sum(lb[lb > 0]))
+        lin_mid = float(np.sum(lm[lm > 0]))
         bass_share = lin_bass / lin_pos if lin_pos > 1e-9 else 0.0
+        mid_share = lin_mid / lin_pos if lin_pos > 1e-9 else 0.0
         self._prev_log = cur
         self._prev_lin = lin
 
@@ -296,17 +323,34 @@ class Analyzer:
         )
         if beat:
             self._beat_times.append(self._frame_index * self.frame_period)
-        if bass_share >= BASS_FLUX_SHARE:
+        # Each stream requires both a real share of the onset's linear energy
+        # AND dominance over the other: a kick is bass-dominant, a guitar pluck
+        # or snare is mid-dominant — attack splash alone can't cross over.
+        if bass_share >= BASS_FLUX_SHARE and bass_share >= mid_share:
             bass_beat, bass_strength, self._since_bass = self._threshold_onset(
                 bass_flux, self._bass_hist, self._since_bass
             )
         else:  # broadband/treble splash (hi-hat attack), not a bass hit
             bass_beat, bass_strength = False, 0.0
             self._since_bass += 1
+        if mid_share >= MID_FLUX_SHARE and mid_share > bass_share:
+            mid_beat, mid_strength, self._since_mid = self._threshold_onset(
+                mid_flux, self._mid_hist, self._since_mid
+            )
+        else:
+            mid_beat, mid_strength = False, 0.0
+            self._since_mid += 1
 
         self._flux_hist.append(flux)
         self._bass_hist.append(bass_flux)
-        return beat, strength, flux, bass_beat, bass_strength, bass_flux
+        self._mid_hist.append(mid_flux)
+        return {
+            "beat": beat, "strength": strength, "flux": flux,
+            "bass_beat": bass_beat, "bass_strength": bass_strength,
+            "bass_flux": bass_flux,
+            "mid_beat": mid_beat, "mid_strength": mid_strength,
+            "mid_flux": mid_flux,
+        }
 
     def _threshold_onset(
         self, flux: float, hist: deque[float], since: int
@@ -339,6 +383,8 @@ class Analyzer:
         self._prev_lin = None
         self._flux_hist.clear()
         self._bass_hist.clear()
+        self._mid_hist.clear()
         self._beat_times.clear()
         self._since_beat = self._refractory
         self._since_bass = self._refractory
+        self._since_mid = self._refractory

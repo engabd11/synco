@@ -39,6 +39,7 @@ def main() -> int:
     print(f"tempo      : {tm.bpm:8.1f} BPM  (confidence {tm.confidence:.2f}, "
           f"{'USABLE' if tm.usable else 'not usable -> live fallback'})")
     print(f"beats      : {tm.beats.size}  (downbeat offset {tm.downbeat})")
+    print(f"mid onsets : {tm.mid_beats.size}  (guitar/snare stream)")
     if tm.beats.size > 8:
         ivals = tm.beats[1:] - tm.beats[:-1]
         print(f"  interval : median {ivals.mean():.3f} s, spread "

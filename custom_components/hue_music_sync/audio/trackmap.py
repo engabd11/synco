@@ -95,6 +95,7 @@ class TrackFeatures:
     energy: np.ndarray  # (n_frames,) float32, 0..1
     flux: np.ndarray  # (n_frames,) float32, 0..~1 (tempo-model food)
     bass_flux: np.ndarray  # (n_frames,) float32, 0..~1
+    mid_flux: np.ndarray  # (n_frames,) float32, 0..~1 (guitar/snare)
     centroid: np.ndarray  # (n_frames,) float32, 0..1 (structure brightness)
 
 
@@ -110,6 +111,9 @@ class TrackMap:
     downbeat: int  # index into ``beats`` of the first bar start
     sections: list[Section] = field(default_factory=list)
     features: TrackFeatures | None = None  # per-frame playback features
+    # Guitar/snare onsets (timestamps + 0..1 accents) for the mid-role lights.
+    mid_beats: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    mid_accents: np.ndarray = field(default_factory=lambda: np.zeros(0))
 
     @property
     def usable(self) -> bool:
@@ -137,6 +141,11 @@ class TrackMap:
         # Accent-weighted strength on the live detector's ~1..3 scale, so the
         # per-mode beat_threshold gates behave exactly like the live path.
         strength = 1.0 + 2.0 * float(self.accents[j1 - 1]) if beat else 0.0
+        # Scheduled guitar/snare onsets for the mid-role lights.
+        m0 = int(np.searchsorted(self.mid_beats, lo, side="right"))
+        m1 = int(np.searchsorted(self.mid_beats, pos, side="right"))
+        mid = m1 > m0
+        mid_strength = 1.0 + 2.0 * float(self.mid_accents[m1 - 1]) if mid else 0.0
         bands = {name: float(v) for name, v in zip(BANDS, f.bands[i])}
         return AnalysisFrame(
             bands=bands,
@@ -150,6 +159,9 @@ class TrackMap:
             bass_flux=float(f.bass_flux[i]),
             bass_beat=beat,
             bass_strength=strength,
+            mid_flux=float(f.mid_flux[i]),
+            mid_beat=mid,
+            mid_strength=mid_strength,
         )
 
     def grid_at(self, pos: float, prev_pos: float | None = None) -> BeatGrid | None:
@@ -187,6 +199,10 @@ class TrackMap:
             and int(np.searchsorted(beats, prev_pos, side="right")) != i
         )
         beat_idx = (idx_prev - self.downbeat) % 4
+        # Accent of the upcoming beat, so anticipatory effects can size each
+        # beat by how hard the song actually hits it (the Hue+Spotify feel).
+        next_idx = min(self.accents.size - 1, max(0, idx_prev + 1))
+        accent = float(self.accents[next_idx]) if self.accents.size else 1.0
         return BeatGrid(
             bpm=60.0 / period,
             confidence=self.confidence,
@@ -197,6 +213,7 @@ class TrackMap:
             next_beat_t=next_b,
             bar_phase=(beat_idx + phase) / 4.0,
             predicted_beat=bool(crossed),
+            accent=accent,
         )
 
     def section_at(self, pos: float) -> Section | None:
@@ -230,8 +247,8 @@ class EnvelopeExtractor:
         self._hop = hop
         self._hann = np.hanning(window).astype(np.float32)
         freqs = np.fft.rfftfreq(window, 1.0 / sample_rate)
-        self._fb_starts, self._fb_counts, self.n_bass = make_onset_filterbank(
-            freqs.astype(np.float32)
+        self._fb_starts, self._fb_counts, self.n_bass, self.n_mid = (
+            make_onset_filterbank(freqs.astype(np.float32))
         )
         self._freqs = freqs.astype(np.float32)
         # Bin ranges of the named output bands (same edges as the live analyzer).
@@ -244,6 +261,7 @@ class EnvelopeExtractor:
         self._prev_log: np.ndarray | None = None
         self.env: list[float] = []  # SuperFlux onset envelope per frame
         self.bass_env: list[float] = []  # bass-band log-flux per frame
+        self.mid_env: list[float] = []  # mid-band (guitar/snare) log-flux
         self.rms: list[float] = []
         self.bands: list[np.ndarray] = []  # linear filterbank means per frame
         self.named_bands: list[np.ndarray] = []  # the 5 output bands per frame
@@ -273,6 +291,9 @@ class EnvelopeExtractor:
         bdiff = logb[:, : self.n_bass] - prev[:, : self.n_bass]
         np.maximum(bdiff, 0.0, out=bdiff)
         self.bass_env.extend(np.sum(bdiff, axis=1).tolist())
+        mdiff = logb[:, self.n_bass : self.n_mid] - prev[:, self.n_bass : self.n_mid]
+        np.maximum(mdiff, 0.0, out=mdiff)
+        self.mid_env.extend(np.sum(mdiff, axis=1).tolist())
         self.rms.extend(np.sqrt(np.mean(frames * frames, axis=1)).tolist())
         self.bands.extend(lin)
         # The 5 named output bands (same maths as the live analyzer: RMS of the
@@ -354,6 +375,41 @@ def _track_beats(env: np.ndarray, bpm: float) -> np.ndarray:
     while backlink[beats[-1]] >= 0:
         beats.append(int(backlink[beats[-1]]))
     return np.array(beats[::-1], dtype=np.int64)
+
+
+def _pick_onsets(
+    env: np.ndarray,
+    sensitivity: float = 1.5,
+    min_gap: int = 6,
+    floor: float = 2.5,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Offline onset peak-picking with a rolling adaptive threshold.
+
+    Returns ``(times, accents)`` — onset timestamps (s) and 0..1 accents — the
+    scheduled equivalent of the live mid-onset detector.
+    """
+    n = env.size
+    if n < 64:
+        return np.zeros(0), np.zeros(0)
+    w = 43  # ~0.9 s, matching the live detector's history window
+    kernel = np.ones(w) / w
+    mean = np.convolve(env, kernel, mode="same")
+    var = np.convolve(env * env, kernel, mode="same") - mean * mean
+    thr = np.maximum(mean + sensitivity * np.sqrt(np.maximum(var, 0.0)), floor)
+    is_peak = (env > thr) & (env >= np.roll(env, 1)) & (env >= np.roll(env, -1))
+    cand = np.where(is_peak)[0]
+    picked: list[int] = []
+    last = -min_gap
+    for i in cand:
+        if i - last >= min_gap:
+            picked.append(int(i))
+            last = int(i)
+    if not picked:
+        return np.zeros(0), np.zeros(0)
+    idx = np.array(picked, dtype=np.int64)
+    strength = np.minimum(3.0, env[idx] / np.maximum(thr[idx], 1e-9))
+    accents = np.clip((strength - 1.0) / 2.0, 0.0, 1.0)
+    return idx.astype(np.float64) * _FRAME_PERIOD, accents
 
 
 def _find_downbeat(bass_env: np.ndarray, beat_frames: np.ndarray) -> int:
@@ -453,6 +509,8 @@ def _finish_analysis(ex: EnvelopeExtractor) -> TrackMap | None:
     if intervals.size:
         bpm = float(60.0 / np.median(intervals))
     sections = _segment_sections(bands, rms, duration)
+    mid_env = np.asarray(ex.mid_env, dtype=np.float64)
+    mid_beats, mid_accents = _pick_onsets(mid_env)
     return TrackMap(
         duration=duration,
         bpm=bpm,
@@ -461,7 +519,9 @@ def _finish_analysis(ex: EnvelopeExtractor) -> TrackMap | None:
         accents=accents,
         downbeat=downbeat,
         sections=sections,
-        features=_build_features(ex, env, bass_env, rms),
+        features=_build_features(ex, env, bass_env, mid_env, rms),
+        mid_beats=mid_beats,
+        mid_accents=mid_accents,
     )
 
 
@@ -477,7 +537,11 @@ def _norm_p(a: np.ndarray, pct: float, floor: float) -> np.ndarray:
 
 
 def _build_features(
-    ex: EnvelopeExtractor, env: np.ndarray, bass_env: np.ndarray, rms: np.ndarray
+    ex: EnvelopeExtractor,
+    env: np.ndarray,
+    bass_env: np.ndarray,
+    mid_env: np.ndarray,
+    rms: np.ndarray,
 ) -> TrackFeatures:
     """Globally-normalised playback features (offline equivalent of the AGC)."""
     named = np.asarray(ex.named_bands, dtype=np.float32)
@@ -491,6 +555,7 @@ def _build_features(
         # typical beat lands near 1.0 like the live flux AGC.
         flux=_norm_p(env, 99.0, floor=2.5),
         bass_flux=_norm_p(bass_env, 99.0, floor=2.5),
+        mid_flux=_norm_p(mid_env, 99.0, floor=2.5),
         centroid=np.asarray(ex.centroid, dtype=np.float32),
     )
 

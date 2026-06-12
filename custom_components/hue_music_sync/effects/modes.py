@@ -102,14 +102,15 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
     # user choice, see effects/safety.py): bass and guitar split the room 2:1,
     # both snapping hard to full; kicks land at a low threshold and mid onsets
     # (guitar/snare) hit their own lights even off the grid. Roles rotate every
-    # 4 bars so the energy keeps moving around the room.
+    # 4 bars. A lit, fluid base with wide soft wavefronts underneath — the
+    # snaps are the percussion, the rest of the room keeps flowing.
     SyncMode.INTENSE: ModeParams(
-        base=0.06, floor=0.02, bass_gain=0.50, beat_gain=1.2, beat_threshold=1.15,
+        base=0.14, floor=0.06, bass_gain=0.60, beat_gain=1.2, beat_threshold=1.1,
         spread=0.0, colour_speed=0.07, shimmer=0.0, colour_sat=0.9,
-        colour_beat_step=0.045, colour_lerp=0.45, bri_attack=1.0, bri_decay=0.50,
-        wave_gain=1.1, wave_speed=2.8, wave_width=0.28,
+        colour_beat_step=0.045, colour_lerp=0.40, bri_attack=1.0, bri_decay=0.36,
+        wave_gain=1.1, wave_speed=2.6, wave_width=0.34,
         anticipation_ms=90, drop_boost=0.80, build_desat=0.55,
-        role_mix=(0.67, 0.33, 0.0), mid_gain=1.0, mid_threshold=1.25,
+        role_mix=(0.67, 0.33, 0.0), mid_gain=1.0, mid_threshold=1.15,
         role_rotate_beats=16, hard_snap=True,
     ),
     # UNRESTRAINED maximum: a dark room where every light is bass and only the
@@ -211,24 +212,45 @@ def beat_colour_advance(params: ModeParams, strength: float, bass: float) -> flo
     return params.colour_beat_step * min(1.5, 0.5 + strength) * weight
 
 
+def accent_knee(strength: float, threshold: float) -> float:
+    """Continuous accent gate: 0 below (thr−0.4), 1 above (thr+0.4).
+
+    Binary thresholds are why beats felt random: the adaptive onset threshold
+    tracks the kicks themselves, so identical-sounding kicks score ~1.0–1.6 and
+    a hard gate passes an arbitrary subset. A soft knee makes every beat's
+    response proportional to how hard the song actually hit it — strong accents
+    slam, ordinary beats give a smaller swell, weak ones fade out smoothly.
+    """
+    return max(0.0, min(1.0, (strength - threshold + 0.4) / 0.8))
+
+
 def kick_flash(params: ModeParams, strength: float, bass: float) -> float:
-    """Flash a bass-role light gets from a qualifying kick (0 if it doesn't).
+    """Snap a bass-role light gets from a kick, scaled by its accent.
 
     Weighted by bass content so the snaps track the kick rather than incidental
     onsets. The engine keeps this as a fast-decaying per-light overlay so beats
     snap to full independent of the slower continuous smoothing.
     """
-    if strength >= params.beat_threshold:
-        weight = 0.4 + 0.6 * bass  # full on kicks, dimmer on bass-less onsets
-        return params.beat_gain * min(1.0, strength / 2.0) * weight
-    return 0.0
+    if strength <= 0.0:
+        return 0.0
+    weight = 0.4 + 0.6 * bass  # full on kicks, dimmer on bass-less onsets
+    return (
+        params.beat_gain
+        * min(1.0, strength / 2.0)
+        * weight
+        * accent_knee(strength, params.beat_threshold)
+    )
 
 
 def mid_flash(params: ModeParams, strength: float) -> float:
-    """Flash a mid-role light gets from a guitar/snare (non-bass) onset."""
-    if params.mid_gain > 0.0 and strength >= params.mid_threshold:
-        return params.mid_gain * min(1.0, strength / 2.0)
-    return 0.0
+    """Pop a mid-role light gets from a guitar/snare onset, accent-scaled."""
+    if params.mid_gain <= 0.0 or strength <= 0.0:
+        return 0.0
+    return (
+        params.mid_gain
+        * min(1.0, strength / 2.0)
+        * accent_knee(strength, params.mid_threshold)
+    )
 
 
 def render(engine, frame) -> dict[int, tuple[RGB, float]]:

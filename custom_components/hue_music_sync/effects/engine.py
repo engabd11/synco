@@ -22,6 +22,7 @@ from .modes import (
     MOVIE_PARAMS,
     ROLE_BASS,
     ROLE_MID,
+    accent_knee,
     assign_roles,
     band_for_rank,
     beat_colour_advance,
@@ -240,26 +241,29 @@ class EffectEngine:
     ) -> None:
         """Launch a beat wavefront, anticipating the beat when tempo is locked.
 
-        When locked we fire ``anticipation_ms`` *before* the predicted beat so the
-        wave reaches the room as the kick lands (cancelling bulb latency). When
-        unlocked we fall back to firing on qualifying bass onsets only — the same
-        ``beat_threshold`` gate as the flash, so an uncertain grid degrades to
-        *fewer*, surer waves rather than one per hi-hat.
+        When locked we fire ``anticipation_ms`` *before* the predicted beat so
+        the wave reaches the room as the kick lands (cancelling bulb latency),
+        and the wave is **sized by the upcoming beat's accent** (known from the
+        track map) — main beats roll big, ordinary beats ripple. When unlocked
+        we fall back to firing on bass onsets, accent-knee scaled, so an
+        uncertain grid degrades to smaller, surer waves rather than one per
+        hi-hat.
         """
         antic = p.anticipation_ms / 1000.0
-        fire = False
+        strength = 0.0
         if beatgrid is not None and beatgrid.locked:
             if beatgrid.predicted_beat:
                 self._wave_armed = True  # re-arm for the next beat
             if self._wave_armed and beatgrid.time_to_next_beat <= antic:
-                fire = True
                 self._wave_armed = False
-        elif vis_strength >= p.beat_threshold:
-            fire = True
-        if not fire:
+                strength = 0.45 + 1.05 * max(0.0, min(1.0, beatgrid.accent))
+        elif vis_strength > 0.0:
+            knee = accent_knee(vis_strength, p.beat_threshold)
+            if knee > 0.2:
+                strength = min(1.5, (0.5 + vis_strength) * knee)
+        if strength <= 0.0:
             return
         bass = max(frame.bands.get("sub_bass", 0.0), frame.bands.get("bass", 0.0))
-        strength = min(1.5, 0.5 + vis_strength) if vis_strength > 0.0 else 1.0
         self._waves.append(
             Wave(
                 origin=self._origin,
@@ -291,20 +295,30 @@ class EffectEngine:
         self._update_roles(p, frame, beatgrid, structure)
         # One decision for everything visible: which kick (if any) qualifies.
         vis_strength, vis_bass = self._visible_event(frame, beatgrid)
-        # Mid (guitar/snare) onsets: broadband hits that are NOT bass. They are
-        # deliberately not grid-gated — syncopated guitar is the point — and they
-        # only ever reach the mid-role lights, so they read as "that light is
-        # the guitar" rather than as noise.
-        mid_strength = (
-            frame.beat_strength if (frame.beat and not frame.bass_beat) else 0.0
-        )
-        # Advance the palette position: a slow continuous drift plus a step on
-        # every visible beat so the colour moves with the music (bolder steps
-        # in loud sections, gentler in quiet ones).
+        # Mid (guitar/snare) onsets from their own dedicated detector stream.
+        # Deliberately not grid-gated — syncopated guitar is the point — and
+        # they only ever reach the mid-role lights, so they read as "that light
+        # is the guitar" rather than as noise.
+        mid_strength = frame.mid_strength if frame.mid_beat else 0.0
+        # Advance the palette position. With a locked grid the per-beat step is
+        # spread *continuously across each beat* — a fluid, tempo-locked colour
+        # roll (the Hue+Spotify look) — with only a smaller bump left on the
+        # accent itself. Without a grid, colour steps discretely on the beat.
         self.colour_phase += p.colour_speed * dt
-        self.colour_phase += beat_colour_advance(p, vis_strength, vis_bass) * (
-            0.6 + 0.4 * self.section_level
-        )
+        sect = 0.6 + 0.4 * self.section_level
+        adv = beat_colour_advance(p, vis_strength, vis_bass) * sect
+        if (
+            beatgrid is not None
+            and beatgrid.locked
+            and beatgrid.period_s > 0.05
+            and p.colour_beat_step > 0.0
+        ):
+            self.colour_phase += (
+                p.colour_beat_step * 0.7 * (dt / beatgrid.period_s) * sect
+            )
+            self.colour_phase += adv * 0.35
+        else:
+            self.colour_phase += adv
 
         # Spatial beat wavefronts (predictive when a beat grid is supplied).
         if p.wave_gain > 0.0:

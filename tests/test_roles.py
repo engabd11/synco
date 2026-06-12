@@ -62,11 +62,12 @@ def _kick(strength: float = 2.5) -> AnalysisFrame:
 
 
 def _guitar_hit(strength: float = 2.2) -> AnalysisFrame:
-    # A broadband onset that is NOT bass: the mid-role trigger.
+    # A mid-band (guitar/snare) onset from the dedicated mid detector stream.
     return AnalysisFrame(
         bands={"sub_bass": 0.1, "bass": 0.1, "low_mid": 1.0, "mid": 1.0, "high": 0.4},
         energy=0.7, beat=True, beat_strength=strength,
         bass_beat=False, bass_strength=0.0,
+        mid_beat=True, mid_strength=strength,
     )
 
 

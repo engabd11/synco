@@ -139,6 +139,31 @@ def test_frame_at_bands_follow_the_audio(map_120: TrackMap):
     assert map_120.frame_at(10_000.0) is None
 
 
+def test_map_schedules_mid_onsets_and_accents():
+    # Kicks + off-beat 700 Hz plucks: the map must schedule the plucks on the
+    # mid stream, and grid_at must expose a per-beat accent for wave sizing.
+    seconds = 30.0
+    sig = _song(bpm=120.0, seconds=seconds)
+    sr = _SR
+    pluck = _kick(int(0.06 * sr), freq=700.0)
+    for bt in np.arange(0.55, seconds, 1.0):
+        i = int(bt * sr)
+        seg = pluck[: len(sig) - i] * 0.8
+        sig[i : i + len(seg)] += seg
+    sig = sig / np.max(np.abs(sig)) * 0.9
+    tm = analyze_pcm(sig)
+    assert tm is not None and tm.usable
+    assert tm.mid_beats.size >= 10
+    # Most scheduled mid onsets land near the true pluck times.
+    true = np.arange(0.55, seconds, 1.0)
+    close = sum(1 for t in tm.mid_beats if np.min(np.abs(true - t)) < 0.08)
+    assert close >= tm.mid_beats.size * 0.7
+    g = tm.grid_at(10.0)
+    assert g is not None and 0.0 <= g.accent <= 1.0
+    fr = tm.frame_at(10.0)
+    assert fr is not None and fr.mid_flux >= 0.0
+
+
 def test_noise_is_not_usable():
     rng = np.random.default_rng(7)
     noise = (rng.standard_normal(_SR * 20) * 0.3).astype(np.float32)
