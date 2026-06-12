@@ -73,6 +73,15 @@ BASS_FLUX_SHARE = 0.25
 # Same idea for the guitar/snare stream: real mid-range energy, not a kick's
 # attack splash (kick frames are bass-dominant and are excluded separately).
 MID_FLUX_SHARE = 0.30
+# A mid onset must also be a *percussive* attack. The discriminator is attack
+# duration on the mid-band linear energy envelope: an instant transient (strum,
+# snare) reaches its peak as fast as the 46 ms analysis window can fill
+# (~3 hops), while a sung vowel swells over 80-150 ms (5+ hops) — which is why
+# mid-role lights used to pop on syllables. The event fires on the first
+# non-rising frame (one hop after the peak), trading ~20 ms of latency for
+# never confusing a swell with a hit.
+MID_MAX_ATTACK_FRAMES = 3
+MID_RISE_RATIO = 1.05  # energy growth per frame that still counts as "rising"
 
 
 def log_spectrum(mag: np.ndarray) -> np.ndarray:
@@ -174,8 +183,12 @@ class Analyzer:
             lo_i = int(np.searchsorted(freqs, lo, side="left"))
             hi_i = int(np.searchsorted(freqs, hi, side="right"))
             self._band_bins[name] = (lo_i, max(lo_i + 1, hi_i))
-        self._agc = {name: _AGC() for name in BANDS}
-        self._energy_agc = _AGC()
+        # Band/energy AGC decays slowly (~70 s half-life at 50 fps): it should
+        # absorb mastering-level differences between tracks, NOT the dynamics
+        # *within* one — with the old ~9 s half-life a quiet bridge re-inflated
+        # to full brightness and the chorus arrived looking no louder.
+        self._agc = {name: _AGC(decay=0.9998) for name in BANDS}
+        self._energy_agc = _AGC(decay=0.9998)
         self._flux_agc = _AGC()
         self._bass_flux_agc = _AGC()
         self._mid_flux_agc = _AGC()
@@ -187,6 +200,11 @@ class Analyzer:
         )
         self._prev_log: np.ndarray | None = None
         self._prev_lin: np.ndarray | None = None
+        # Mid-attack state machine (see MID_MAX_ATTACK_FRAMES).
+        self._mid_e_prev = 0.0
+        self._mid_rise_n = 0
+        self._mid_attack_ok = False
+        self._mid_attack_flux = 0.0
         self._flux_hist: deque[float] = deque(maxlen=43)  # ~0.9s at 50 fps
         self._bass_hist: deque[float] = deque(maxlen=43)
         self._mid_hist: deque[float] = deque(maxlen=43)
@@ -227,6 +245,11 @@ class Analyzer:
             self._since_beat += 1
             self._since_bass += 1
             self._since_mid += 1
+            # Keep the mid-attack machine coherent through silence.
+            self._mid_rise_n = 0
+            self._mid_e_prev = float(
+                np.sum(self._prev_lin[self._n_bass : self._n_mid])
+            )
             t_audio = self._frame_index * self.frame_period
             self._frame_index += 1
             return AnalysisFrame(
@@ -295,15 +318,18 @@ class Analyzer:
                 "bass_beat": False, "bass_strength": 0.0, "bass_flux": 0.0,
                 "mid_beat": False, "mid_strength": 0.0, "mid_flux": 0.0,
             }
-        # Broadband SuperFlux: positive increases over the frequency-max-filtered
-        # previous frame (vibrato/slides produce none; real onsets do).
-        diff = cur - max_filter_freq(self._prev_log)
+        # SuperFlux on all three streams: positive increases over the
+        # frequency-max-filtered previous frame. Vibrato, slides AND a low
+        # tone's leakage-skirt wobble (a decaying kick tail "breathing" inside
+        # the analysis window) produce none; real onsets do. The band streams
+        # used plain flux before, which let tail wobble re-fire as fake beats.
+        mf_prev = max_filter_freq(self._prev_log)
+        diff = cur - mf_prev
         flux = float(np.sum(diff[diff > 0]))
-        # Band-limited plain positive log-flux for the kick and guitar streams.
         nb, nm = self._n_bass, self._n_mid
-        bdiff = cur[:nb] - self._prev_log[:nb]
+        bdiff = diff[:nb]
         bass_flux = float(np.sum(bdiff[bdiff > 0]))
-        mdiff = cur[nb:nm] - self._prev_log[nb:nm]
+        mdiff = diff[nb:nm]
         mid_flux = float(np.sum(mdiff[mdiff > 0]))
         # Linear-domain band shares of this frame's onset energy (leakage-proof:
         # log compression makes a hi-hat's splash into other bands look big).
@@ -333,13 +359,34 @@ class Analyzer:
         else:  # broadband/treble splash (hi-hat attack), not a bass hit
             bass_beat, bass_strength = False, 0.0
             self._since_bass += 1
-        if mid_share >= MID_FLUX_SHARE and mid_share > bass_share:
-            mid_beat, mid_strength, self._since_mid = self._threshold_onset(
-                mid_flux, self._mid_hist, self._since_mid
-            )
-        else:
-            mid_beat, mid_strength = False, 0.0
+        # Mid stream: a small state machine over the mid-band linear energy.
+        # Accumulate the rise (tracking its strongest mid-dominant flux), then
+        # fire once when the rise completes — only if it completed fast enough
+        # to be percussive. Swells never fire, and one strum fires exactly once.
+        mid_beat, mid_strength = False, 0.0
+        e_mid = float(np.sum(lin[nb:nm]))
+        rising = e_mid > self._mid_e_prev * MID_RISE_RATIO
+        if rising:
+            if self._mid_rise_n == 0:
+                self._mid_attack_flux = 0.0
+                self._mid_attack_ok = False
+            self._mid_rise_n += 1
+            if mid_share >= MID_FLUX_SHARE and mid_share > bass_share:
+                self._mid_attack_ok = True
+                self._mid_attack_flux = max(self._mid_attack_flux, mid_flux)
             self._since_mid += 1
+        else:
+            if 1 <= self._mid_rise_n <= MID_MAX_ATTACK_FRAMES and self._mid_attack_ok:
+                mid_beat, mid_strength, self._since_mid = self._threshold_onset(
+                    self._mid_attack_flux,
+                    self._mid_hist,
+                    self._since_mid,
+                    require_rising=False,
+                )
+            else:
+                self._since_mid += 1
+            self._mid_rise_n = 0
+        self._mid_e_prev = e_mid
 
         self._flux_hist.append(flux)
         self._bass_hist.append(bass_flux)
@@ -353,17 +400,30 @@ class Analyzer:
         }
 
     def _threshold_onset(
-        self, flux: float, hist: deque[float], since: int
+        self, flux: float, hist: deque[float], since: int, require_rising: bool = True
     ) -> tuple[bool, float, int]:
-        """Adaptive mean+k·std threshold with a refractory, on one flux stream."""
+        """Adaptive median+k·MAD threshold with a refractory, on one flux stream.
+
+        Median+MAD rather than mean+std: in dense, loud passages (wall-of-sound
+        choruses) the sustained content drives both the mean and the deviation
+        up until mean+k·std sits *above* the kicks and detection goes silent in
+        the loudest part of the song. The median tracks the inter-onset
+        baseline and MAD ignores the spikes, so kicks keep clearing it.
+        """
         since += 1
         if len(hist) < hist.maxlen // 2:
             return False, 0.0, since
         arr = np.fromiter(hist, dtype=np.float32)
-        threshold = max(
-            float(arr.mean() + self._sensitivity * arr.std()), MIN_ONSET_FLUX
-        )
-        if flux > threshold and since >= self._refractory:
+        med = float(np.median(arr))
+        mad = float(np.median(np.abs(arr - med)))
+        threshold = max(med + self._sensitivity * 3.0 * mad, MIN_ONSET_FLUX)
+        # Rising edge required (hist[-1] is the previous frame's flux): a real
+        # attack is climbing when it crosses; a long decay tail re-crossing the
+        # now-lower robust threshold right as the refractory expires is not.
+        # (The mid stream skips this — its attack state machine fires one frame
+        # *after* the energy peak by design, having verified the shape itself.)
+        rising = (not require_rising) or flux > float(hist[-1])
+        if flux > threshold and rising and since >= self._refractory:
             return True, min(3.0, flux / threshold), 0
         return False, 0.0, since
 
@@ -381,6 +441,10 @@ class Analyzer:
         self._buf[:] = 0.0
         self._prev_log = None
         self._prev_lin = None
+        self._mid_e_prev = 0.0
+        self._mid_rise_n = 0
+        self._mid_attack_ok = False
+        self._mid_attack_flux = 0.0
         self._flux_hist.clear()
         self._bass_hist.clear()
         self._mid_hist.clear()

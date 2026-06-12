@@ -43,9 +43,15 @@ class BeatGrid:
     predicted_beat: bool = False  # True on the frame the beat clock ticks over
     # Accent (0..1) of the *upcoming* beat. The track map fills this from its
     # per-beat onset strengths so anticipatory effects (waves) can size each
-    # beat by how hard the song actually hits it; the causal tracker doesn't
-    # know the future and leaves it at full.
+    # beat by how hard the song actually hits it; the causal tracker predicts
+    # it from the recent beats' measured accents.
     accent: float = 1.0
+    # Accent (0..1) of the beat that just started (the one ``predicted_beat``
+    # announces). At-beat effects (flashes, colour bumps) size with this.
+    accent_now: float = 1.0
+    # Which beat of the bar just started (0 = downbeat). Drives the musical
+    # pulse hierarchy: downbeats hit hardest, beats 2/4 land softer.
+    beat_in_bar: int = 0
 
 
 _MIN_BPM = 70.0
@@ -95,6 +101,12 @@ class TempoTracker:
         # Accumulate onset strength per beat-of-bar to find the downbeat.
         self._bar_accent = np.zeros(4, dtype=np.float64)
         self._downbeat = 0
+        # Per-beat accent measurement: peak onset flux inside each beat window,
+        # normalised by a rolling p90 of recent beats (so "strong" always means
+        # strong *for this passage*, not for the whole track or the AGC scale).
+        self._acc_cur = 0.0
+        self._acc_hist: deque[float] = deque(maxlen=16)
+        self._acc_pred = 0.7  # smoothed prediction for the upcoming beat
 
     def update(
         self,
@@ -132,6 +144,13 @@ class TempoTracker:
                 dt = self._period
         self._last_t = t_audio
 
+        # Track the loudest onset moment inside the current beat window, bass-
+        # weighted so kicks dominate the accent measure over hi-hat splash.
+        self._acc_cur = max(
+            self._acc_cur,
+            max(0.0, flux) * (0.5 + 0.5 * min(1.0, max(0.0, bass))),
+        )
+
         predicted = False
         if self._period_s > 0.0:
             # Free-run the beat clock at the locked tempo.
@@ -140,6 +159,7 @@ class TempoTracker:
                 self._phase -= 1.0
                 self._beat_count += 1
                 predicted = True
+                self._finish_beat_accent()
             # PLL: an onset *near a predicted beat* nudges the clock toward the
             # boundary; off-grid onsets (vocal hits, hi-hat flams) are ignored
             # — unless they form a streak, which means the grid is anchored on
@@ -172,7 +192,27 @@ class TempoTracker:
             next_beat_t=t_audio + ttn,
             bar_phase=(beat_idx + self._phase) / 4.0,
             predicted_beat=predicted,
+            accent=self._acc_pred,
+            accent_now=self._acc_pred,
+            beat_in_bar=beat_idx,
         )
+
+    def _finish_beat_accent(self) -> None:
+        """Fold the completed beat window's peak flux into the accent model.
+
+        The causal tracker can't know the upcoming beat's accent (the kick
+        hasn't sounded yet), so it predicts: an EMA of recent beats' measured
+        accents, each normalised by the rolling p90 so the scale is always
+        "relative to this passage". The engine corrects upward live when a
+        detected on-grid onset comes in hotter than the prediction.
+        """
+        self._acc_hist.append(self._acc_cur)
+        if len(self._acc_hist) >= 4:
+            ref = float(np.percentile(np.fromiter(self._acc_hist, dtype=np.float64), 90))
+            if ref > 1e-6:
+                norm = min(1.0, self._acc_cur / ref)
+                self._acc_pred += 0.5 * (norm - self._acc_pred)
+        self._acc_cur = 0.0
 
     def _recompute_tempo(self) -> None:
         env = np.fromiter(self._flux, dtype=np.float64)
@@ -219,3 +259,6 @@ class TempoTracker:
         self._bar_accent[:] = 0.0
         self._downbeat = 0
         self._last_t = None
+        self._acc_cur = 0.0
+        self._acc_hist.clear()
+        self._acc_pred = 0.7

@@ -26,8 +26,10 @@ from .modes import (
     assign_roles,
     band_for_rank,
     beat_colour_advance,
+    beat_pulse,
     kick_flash,
     mid_flash,
+    pulse_weight,
     render,
 )
 from .spatial import Wave, distance, floor_origin, height_band, normalize_positions
@@ -39,10 +41,16 @@ _FLASH_DECAY = 0.80  # per-frame fade of the beat flash overlay (~5 frames)
 _ENV_RISE = 0.55
 _ENV_FALL = 0.10
 
-# When the tempo grid is locked, only onsets within this phase distance of a
-# predicted beat may drive visible accents (flash/colour/waves); anything in
-# the middle of the beat is a vocal hit or fill, not the pulse.
+# When the tempo grid is locked the *schedule* drives the show (every grid
+# beat fires — the Samsung/Spotify metronome). A live-detected onset may still
+# enlarge the scheduled pulse, but only within this phase distance of the
+# beat; mid-beat onsets are vocal hits or fills, not the pulse.
 _ONGRID_PHASE = 0.18
+
+# Locked mid (guitar/snare) pops are quantised to the eighth-note grid: hits
+# within this phase distance of an eighth slot (on-beat or off-beat) pass,
+# syllables and ornaments floating between slots do not.
+_EIGHTH_PHASE = 0.12
 
 # Brightness and colour smoothing are per-mode (ModeParams.bri_attack/bri_decay
 # and colour_lerp): club modes snap up hard and fall fast; Movie eases gently.
@@ -147,23 +155,37 @@ class EffectEngine:
         self.roles = dict(zip(self._rank_ids, role_list))
 
     @staticmethod
-    def _visible_event(frame: AnalysisFrame, beatgrid: BeatGrid | None) -> tuple[float, float]:
-        """(strength, bass) of a beat allowed to drive visible accents, else (0, 0).
+    def _visible_event(
+        frame: AnalysisFrame, beatgrid: BeatGrid | None
+    ) -> tuple[float, float, bool]:
+        """(strength, bass, grid_locked) of the beat driving visible accents.
 
-        Visible accents (flash, colour step, fallback waves) come from *bass*
-        onsets only — vocals and hi-hats live above the bass band and are what
-        made the show feel random. When the tempo grid is locked, the onset must
-        also land near a predicted beat; off-grid kicks are syncopation, not the
-        pulse, and the wavefronts already carry the grid.
+        **Locked: the schedule conducts.** Every grid beat fires (strength from
+        the beat's accent on the live detector's 1..3 scale) — the references
+        never skip a pulse, and a missed pulse is exactly what reads as
+        "random". A live-detected bass onset near the beat may *enlarge* the
+        pulse (the causal accent is only a prediction) but detection is never
+        required, so dense mixes can't silence the show.
+
+        **Unlocked: reactive fallback.** Bass onsets only — vocals and hi-hats
+        live above the bass band and are what made the show feel random.
         """
-        if not frame.bass_beat:
-            return 0.0, 0.0
-        if beatgrid is not None and beatgrid.locked:
-            phase = beatgrid.phase
-            if _ONGRID_PHASE < phase < 1.0 - _ONGRID_PHASE:
-                return 0.0, 0.0
         bass = max(frame.bands.get("sub_bass", 0.0), frame.bands.get("bass", 0.0))
-        return frame.bass_strength, bass
+        if beatgrid is not None and beatgrid.locked:
+            sched = 0.0
+            if beatgrid.predicted_beat:
+                acc = max(0.0, min(1.0, beatgrid.accent_now))
+                sched = 1.0 + 2.0 * acc
+            det = 0.0
+            if frame.bass_beat:
+                phase = beatgrid.phase
+                if phase <= _ONGRID_PHASE or phase >= 1.0 - _ONGRID_PHASE:
+                    det = frame.bass_strength
+            strength = max(sched, det)
+            return (strength, bass, True) if strength > 0.0 else (0.0, 0.0, True)
+        if not frame.bass_beat:
+            return 0.0, 0.0, False
+        return frame.bass_strength, bass, False
 
     def set_palette(self, palette: Palette) -> None:
         self.palette = palette
@@ -256,7 +278,13 @@ class EffectEngine:
                 self._wave_armed = True  # re-arm for the next beat
             if self._wave_armed and beatgrid.time_to_next_beat <= antic:
                 self._wave_armed = False
-                strength = 0.45 + 1.05 * max(0.0, min(1.0, beatgrid.accent))
+                # Sized by the upcoming beat's accent AND its bar position,
+                # through the same pulse shaping as the flashes — so selective
+                # modes (Extreme) keep their waves for the beats that matter.
+                acc = max(0.0, min(1.0, beatgrid.accent))
+                nb = (beatgrid.beat_in_bar + 1) % 4
+                w = pulse_weight(p, acc, nb)
+                strength = (0.45 + 1.05 * acc) * (0.35 + 0.65 * w)
         elif vis_strength > 0.0:
             knee = accent_knee(vis_strength, p.beat_threshold)
             if knee > 0.2:
@@ -293,13 +321,20 @@ class EffectEngine:
         self._update_env(frame)
         # Refresh the instrument-role assignments (rotate on schedule + drops).
         self._update_roles(p, frame, beatgrid, structure)
-        # One decision for everything visible: which kick (if any) qualifies.
-        vis_strength, vis_bass = self._visible_event(frame, beatgrid)
+        # One decision for everything visible: the scheduled beat (locked) or
+        # the qualifying kick (unlocked reactive fallback).
+        vis_strength, vis_bass, grid_locked = self._visible_event(frame, beatgrid)
         # Mid (guitar/snare) onsets from their own dedicated detector stream.
-        # Deliberately not grid-gated — syncopated guitar is the point — and
-        # they only ever reach the mid-role lights, so they read as "that light
-        # is the guitar" rather than as noise.
+        # They only ever reach the mid-role lights, so they read as "that light
+        # is the guitar". When the grid is locked they're quantised to the
+        # eighth-note slots: syncopated riffs live on that grid, vocal
+        # syllables float between its slots — the other half of the old
+        # "pops on the singing" problem.
         mid_strength = frame.mid_strength if frame.mid_beat else 0.0
+        if mid_strength > 0.0 and grid_locked and beatgrid is not None:
+            ph = beatgrid.phase % 0.5
+            if min(ph, 0.5 - ph) > _EIGHTH_PHASE:
+                mid_strength = 0.0
         # Advance the palette position. With a locked grid the per-beat step is
         # spread *continuously across each beat* — a fluid, tempo-locked colour
         # roll (the Hue+Spotify look) — with only a smaller bump left on the
@@ -330,9 +365,18 @@ class EffectEngine:
         # Per-light beat snaps: bass-role lights snap on kicks, mid-role lights
         # pop on guitar hits. In the wavefront-led classic modes the synchronous
         # snap is scaled down (the wave carries the beat); hard-snap modes slam
-        # on top of the wave — that is the point of them.
+        # on top of the wave — that is the point of them. Grid-locked pulses
+        # are shaped by accent + bar position (every beat fires, sized
+        # musically); the binary accent knee only survives in the unlocked
+        # reactive fallback where there is no schedule to trust.
         flash_scale = 1.0 if p.hard_snap else max(0.0, 1.0 - p.wave_gain)
-        kick = kick_flash(p, vis_strength, vis_bass) * flash_scale
+        if grid_locked and beatgrid is not None:
+            kick = 0.0
+            if vis_strength > 0.0:
+                acc = max(0.0, min(1.0, (vis_strength - 1.0) / 2.0))
+                kick = beat_pulse(p, acc, beatgrid.beat_in_bar, vis_bass) * flash_scale
+        else:
+            kick = kick_flash(p, vis_strength, vis_bass) * flash_scale
         midf = mid_flash(p, mid_strength)
         lf = self._light_flash
         for cid in lf:

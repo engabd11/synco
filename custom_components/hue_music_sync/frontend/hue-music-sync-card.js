@@ -1,5 +1,5 @@
-/**
- * Hue Music Sync Card — "Ambient Glow"
+﻿/**
+ * Hue Music Sync Card â€” "Ambient Glow"
  * A Home Assistant custom Lovelace card for the Hue Music Sync integration.
  *
  * Faithful re-implementation of the "Ambient Glow" design (Variation B):
@@ -7,14 +7,14 @@
  * Hue dark-navy theme.
  *
  * Bundled with and served by the integration (no separate install). Single
- * self-contained custom element — no build step. See README.md for config.
+ * self-contained custom element â€” no build step. See README.md for config.
  */
 
 // Keep in lockstep with the integration's manifest.json version (the
 // integration also cache-busts this file's URL with that version).
-const VERSION = "1.6.0";
+const VERSION = "1.7.0";
 
-/* ───────────────────────── Palette data ───────────────────────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Palette data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 // Colour schemes from the integration, each a small gradient swatch.
 // `match` is the normalised key used to map a colour-select option to a swatch.
 const PALETTES = [
@@ -47,7 +47,7 @@ const DEMO_AREAS = [
 
 const DEMO_NOW = { track: "Neon Tide", artist: "Solenne", art: null, duration: 247 };
 
-/* ───────────────────────── Helpers ───────────────────────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const normalise = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
 const titleize = (s) =>
@@ -72,7 +72,7 @@ function matchPalette(option) {
   );
 }
 
-/* ── colour utilities (album-art extraction + parsing integration colours) ── */
+/* â”€â”€ colour utilities (album-art extraction + parsing integration colours) â”€â”€ */
 function rgbToHex(r, g, b) {
   const h = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
   return "#" + h(r) + h(g) + h(b);
@@ -114,7 +114,7 @@ function vivify(r, g, b) {
 }
 
 // Accept colours the integration may publish: ["#rrggbb", ...], ["r,g,b", ...],
-// [[r,g,b], ...] (0–255 or 0–1 floats). Returns ["#rrggbb", ...] or null.
+// [[r,g,b], ...] (0â€“255 or 0â€“1 floats). Returns ["#rrggbb", ...] or null.
 function parseColorList(val) {
   if (!val) return null;
   let arr = val;
@@ -181,7 +181,7 @@ function extractVibrant(data, k) {
   return hexes.length ? hexes : null;
 }
 
-/* ───────────────────────── Styles (ported from the design) ───────────────────────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Styles (ported from the design) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const CARD_CSS = `
   :host {
     --hue-bg: #0b0a14;
@@ -195,7 +195,7 @@ const CARD_CSS = `
   }
   * { box-sizing: border-box; }
 
-  /* ── card shell ── */
+  /* â”€â”€ card shell â”€â”€ */
   .hue-card {
     position: relative;
     width: 100%;
@@ -209,12 +209,12 @@ const CARD_CSS = `
     transition: box-shadow .4s;
   }
 
-  /* ── now playing text ── */
+  /* â”€â”€ now playing text â”€â”€ */
   .hue-now-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
   .hue-now-track { font-weight: 700; font-size: 16px; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hue-now-artist { font-size: 12.5px; color: var(--hue-dim); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  /* ── album cover ── */
+  /* â”€â”€ album cover â”€â”€ */
   .hue-cover { position: relative; flex: none; overflow: hidden; box-shadow: 0 8px 22px -6px #000a, inset 0 0 0 1px #fff1; }
   .hue-cover-art {
     position: absolute; inset: 0; background-size: cover; background-position: center;
@@ -227,7 +227,7 @@ const CARD_CSS = `
   }
   .hue-cover-gloss { position: absolute; inset: 0; background: linear-gradient(160deg, #ffffff30, transparent 40%); mix-blend-mode: screen; transition: opacity .15s; }
 
-  /* ── areas ── */
+  /* â”€â”€ areas â”€â”€ */
   .hue-areas { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
   .hue-area { display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px 7px 10px; border-radius: 999px;
     background: #ffffff0a; border: 1px solid var(--hue-line); color: var(--hue-dim); font-family: var(--hk);
@@ -237,7 +237,7 @@ const CARD_CSS = `
   .hue-area-dot { width: 7px; height: 7px; border-radius: 50%; transition: .18s; }
   .hue-area-name { white-space: nowrap; }
 
-  /* ── fields / labels ── */
+  /* â”€â”€ fields / labels â”€â”€ */
   .hue-field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
   .hue-field:last-child { margin-bottom: 0; }
   .hue-label { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--hue-faint);
@@ -247,7 +247,7 @@ const CARD_CSS = `
   .hue-grid2.tight { gap: 12px 16px; }
   .hue-grid2 .hue-field { margin-bottom: 0; }
 
-  /* ── segmented ── */
+  /* â”€â”€ segmented â”€â”€ */
   .hue-seg { display: flex; gap: 4px; padding: 4px; background: #00000033; border: 1px solid var(--hue-line); border-radius: 12px; }
   .hue-seg-btn { position: relative; flex: 1; padding: 7px 4px; border: none; background: transparent; border-radius: 9px;
     color: var(--hue-dim); font-family: var(--hk); font-size: 11.5px; font-weight: 600; cursor: pointer; transition: .16s; overflow: hidden; min-width: 0; }
@@ -256,7 +256,7 @@ const CARD_CSS = `
   .hue-seg-label { position: relative; z-index: 1; white-space: nowrap; }
   .hue-seg-glow { position: absolute; inset: 0; opacity: .14; }
 
-  /* ── palette dots ── */
+  /* â”€â”€ palette dots â”€â”€ */
   .hue-dots { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
   .hue-dot { position: relative; border: none; border-radius: 50%; cursor: pointer; padding: 0; width: 26px; height: 26px;
     transition: transform .16s, box-shadow .2s; outline: 1px solid #ffffff1f; outline-offset: -1px; }
@@ -264,7 +264,7 @@ const CARD_CSS = `
   .hue-dot.on { transform: scale(1.06); }
   .hue-dot-ring { position: absolute; inset: 3px; border-radius: 50%; border: 1.5px dashed #ffffffcc; opacity: .8; }
 
-  /* ── slider ── */
+  /* â”€â”€ slider â”€â”€ */
   .hue-slider-row { display: flex; align-items: center; gap: 11px; }
   .hue-slider-icon { font-size: 14px; color: var(--hue-dim); width: 16px; text-align: center; }
   .hue-slider { position: relative; flex: 1; height: 22px; display: flex; align-items: center; cursor: pointer; touch-action: none; }
@@ -274,7 +274,7 @@ const CARD_CSS = `
   .hue-slider-val { font-size: 13px; font-weight: 700; min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
   .hue-slider-suf { font-size: 10px; color: var(--hue-faint); margin-left: 1px; font-weight: 600; }
 
-  /* ── timing offset (precise stepper) ── */
+  /* â”€â”€ timing offset (precise stepper) â”€â”€ */
   .hue-timing { display: flex; align-items: center; gap: 8px; }
   .hue-step { width: 34px; height: 34px; flex: none; border-radius: 10px; border: 1px solid var(--hue-line); background: #ffffff0a;
     color: var(--hue-text); font-size: 19px; line-height: 1; cursor: pointer; font-family: var(--hk); transition: .15s;
@@ -286,18 +286,18 @@ const CARD_CSS = `
   .hue-timing-num { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
   .hue-timing-unit { font-size: 11px; font-weight: 700; color: var(--hue-faint); }
 
-  /* ── power switch ── */
+  /* â”€â”€ power switch â”€â”€ */
   .hue-power { position: relative; width: 52px; height: 30px; border-radius: 999px; border: 1px solid var(--hue-line);
     background: #ffffff12; cursor: pointer; transition: .22s; padding: 0; flex: none; }
   .hue-power-knob { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #cfcce0;
     transition: .22s cubic-bezier(.3,1.4,.5,1); }
   .hue-power.on .hue-power-knob { left: calc(100% - 27px); background: #fff; }
 
-  /* ── bars visualizer ── */
+  /* â”€â”€ bars visualizer â”€â”€ */
   .hue-bars { display: flex; align-items: flex-end; width: 100%; height: 64px; gap: 3px; }
   .hue-bar { flex: 1; min-width: 0; border-radius: 4px; }
 
-  /* ── ambient hero ── */
+  /* â”€â”€ ambient hero â”€â”€ */
   .hue-hero { position: relative; padding: 18px 20px 16px; overflow: hidden; }
   /* Blurred album art behind the colour wash: the card becomes "this song's
      card". Hidden (opacity 0) until the art URL has actually loaded. */
@@ -318,7 +318,7 @@ const CARD_CSS = `
   .hue-bright-mini-icon { font-size: 12px; }
   .hue-amb-body { position: relative; padding: 16px 20px 20px; background: linear-gradient(180deg, #121120cc, #0f0e1c); }
 
-  /* ── transport row ── */
+  /* â”€â”€ transport row â”€â”€ */
   .hue-transport { position: relative; z-index: 2; display: flex; align-items: center; gap: 8px; margin-top: 12px; }
   .hue-tr-btn { width: 34px; height: 30px; border-radius: 10px; border: 1px solid var(--hue-line);
     background: #00000040; color: var(--hue-text); font-size: 13px; cursor: pointer; transition: .15s;
@@ -327,13 +327,13 @@ const CARD_CSS = `
   .hue-tr-time { margin-left: auto; font-size: 11.5px; font-weight: 700; color: var(--hue-dim);
     font-variant-numeric: tabular-nums; letter-spacing: .03em; }
 
-  /* ── title marquee (long titles scroll once into view) ── */
+  /* â”€â”€ title marquee (long titles scroll once into view) â”€â”€ */
   .hue-now-track { text-shadow: 0 1px 10px #000a; }
   .hue-now-track-inner { display: inline-block; white-space: nowrap; }
   .hue-now-track-inner.scroll { animation: hue-mq 9s linear infinite alternate; }
   @keyframes hue-mq { 0%, 18% { transform: translateX(0); } 82%, 100% { transform: translateX(var(--mq, 0px)); } }
 
-  /* ── song-structure timeline (energy silhouette + playhead) ── */
+  /* â”€â”€ song-structure timeline (energy silhouette + playhead) â”€â”€ */
   .hue-tl { position: relative; z-index: 2; margin-top: 14px; height: 22px; display: none; }
   .hue-tl.live { display: block; }
   .hue-tl-sec { position: absolute; bottom: 0; border-radius: 3px 3px 0 0; transition: filter .3s, opacity .3s; }
@@ -343,7 +343,7 @@ const CARD_CSS = `
     background: #fff; box-shadow: 0 0 7px #ffffffaa; }
   @keyframes hue-arm { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.9); } }
 
-  /* ── room mirror (live lamp stage) ── */
+  /* â”€â”€ room mirror (live lamp stage) â”€â”€ */
   .hue-stage { position: relative; height: 92px; border-radius: 14px; margin-bottom: 14px;
     background: radial-gradient(120% 160% at 50% 120%, #ffffff08, transparent 60%), #00000044;
     border: 1px solid var(--hue-line); overflow: hidden; display: none; }
@@ -362,14 +362,14 @@ const CARD_CSS = `
   .hue-stage-legend span { display: inline-flex; align-items: center; gap: 4px; }
   .hue-stage-legend i { width: 7px; height: 7px; border-radius: 50%; }
 
-  /* ── idle beauty: slow palette lava drift while paused ── */
+  /* â”€â”€ idle beauty: slow palette lava drift while paused â”€â”€ */
   .hue-hero-wash.idle { animation: hue-lava 26s ease-in-out infinite alternate; }
   @keyframes hue-lava {
     0% { filter: blur(8px) hue-rotate(0deg); transform: scale(1) translateY(0); }
     100% { filter: blur(8px) hue-rotate(38deg); transform: scale(1.09) translateY(-2.5%); }
   }
 
-  /* ── calibration overlay (tap-to-sync) ── */
+  /* â”€â”€ calibration overlay (tap-to-sync) â”€â”€ */
   .hue-cal { position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 10px; border-radius: 26px; cursor: pointer;
     background: #0b0a14ee; backdrop-filter: blur(8px); user-select: none; -webkit-user-select: none; }
@@ -380,7 +380,7 @@ const CARD_CSS = `
     display: flex; align-items: center; justify-content: center; transition: transform .08s, box-shadow .08s; }
   .hue-cal-cancel { margin-top: 6px; font-size: 11px; color: var(--hue-faint); text-transform: uppercase; letter-spacing: .1em; }
 
-  /* ── intensity preview micro-animations ── */
+  /* â”€â”€ intensity preview micro-animations â”€â”€ */
   .hue-seg-anim { position: absolute; left: 50%; bottom: 3px; transform: translateX(-50%);
     width: 18px; height: 3px; border-radius: 2px; opacity: .8; pointer-events: none; }
   .hue-seg-anim.m-subtle { background: linear-gradient(90deg, #ff7ab8, #7b5cff, #27d3ff); background-size: 300% 100%; animation: hue-pv-drift 4s linear infinite; }
@@ -404,11 +404,11 @@ const CARD_CSS = `
 const ROLE_COLORS = ["#ff5d73", "#4dd2ff", "#ffd166"];
 const ROLE_NAMES = ["bass", "guitar", "vocal"];
 
-/* ───────────────────────── Visualizer ─────────────────────────
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Visualizer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Ambient bars driven by the *real* audio analysis when the integration's live
    WebSocket feed is connected (band energies + kick flags at ~20 Hz), falling
    back to a tempo/position-locked simulation (bpm + beat anchor) when it isn't
-   — so the bars are the actual music whenever they can be. */
+   â€” so the bars are the actual music whenever they can be. */
 class Viz {
   constructor(count) {
     this.count = count;
@@ -497,7 +497,7 @@ class Viz {
   }
 }
 
-/* ───────────────────────── The card element ───────────────────────── */
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ The card element â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 class HueMusicSyncCard extends HTMLElement {
   constructor() {
     super();
@@ -560,7 +560,7 @@ class HueMusicSyncCard extends HTMLElement {
     this._cal = null;         // tap-to-sync calibration state
   }
 
-  /* ── config ── */
+  /* â”€â”€ config â”€â”€ */
   setConfig(config) {
     this._config = config || {};
     // Normalise area definitions.
@@ -588,7 +588,7 @@ class HueMusicSyncCard extends HTMLElement {
         media_player: config.media_player,
       }];
     } else {
-      // no entities → demo mode
+      // no entities â†’ demo mode
       this._areas = DEMO_AREAS.map((a) => ({ name: a.name, demo: true }));
       this._demo = true;
     }
@@ -613,7 +613,7 @@ class HueMusicSyncCard extends HTMLElement {
     if (!hass) return "";
     let out = "";
     const npSig = (e) => {
-      if (!e) return "∅";
+      if (!e) return "âˆ…";
       const x = e.attributes;
       return `${e.state}|${x.media_title || ""}|${x.media_artist || ""}|${x.entity_picture || x.media_image || ""}` +
         `|${x.media_position || ""}|${x.bpm || ""}|${x.album_colors ? JSON.stringify(x.album_colors) : (x.palette ? JSON.stringify(x.palette) : "")}`;
@@ -622,7 +622,7 @@ class HueMusicSyncCard extends HTMLElement {
       for (const id of [a.intensity, a.effect, a.colour, a.brightness, a.timing]) {
         if (!id) continue;
         const e = hass.states[id];
-        out += e ? `${id}=${e.state};` : `${id}=∅;`;
+        out += e ? `${id}=${e.state};` : `${id}=âˆ…;`;
       }
       // switch carries the area state plus any integration-published now-playing /
       // album-colour / bpm attributes, so re-render when those change.
@@ -680,7 +680,7 @@ class HueMusicSyncCard extends HTMLElement {
     this._dropLiveSub();
   }
 
-  /* ── live feed subscription ── */
+  /* â”€â”€ live feed subscription â”€â”€ */
   _ensureLiveSub() {
     const area = this._areas[this._areaIndex] || {};
     const sw = area.switch;
@@ -740,7 +740,7 @@ class HueMusicSyncCard extends HTMLElement {
     return l && performance.now() - l.at < 450 ? l : null;
   }
 
-  /* ── derive the live model for the active area ── */
+  /* â”€â”€ derive the live model for the active area â”€â”€ */
   _model() {
     const area = this._areas[this._areaIndex] || {};
     const hass = this._hass;
@@ -824,7 +824,7 @@ class HueMusicSyncCard extends HTMLElement {
     const timingMax = timingEnt ? Number(timingEnt.attributes.max ?? 200) : 200;
     const timingStep = timingEnt ? Number(timingEnt.attributes.step ?? 5) : 5;
 
-    // now playing — prefer the *live* player the integration is actually
+    // now playing â€” prefer the *live* player the integration is actually
     // following (published as `source_player` on the switch; zero config),
     // then a configured media_player, then the switch's mirrored attributes,
     // then demo data. Reading the live entity matters for artwork: the
@@ -838,7 +838,7 @@ class HueMusicSyncCard extends HTMLElement {
     if (live) {
       const la = live.attributes;
       now = {
-        track: la.media_title || swAttr.media_title || titleize(live.state) || "—",
+        track: la.media_title || swAttr.media_title || titleize(live.state) || "â€”",
         artist: la.media_artist || la.media_album_name || swAttr.media_artist || "",
         art: la.entity_picture || swAttr.media_image || null,
         playing: live.state === "playing",
@@ -848,7 +848,7 @@ class HueMusicSyncCard extends HTMLElement {
       };
     } else if (sw && (swAttr.media_title || swAttr.entity_picture || swAttr.media_image)) {
       now = {
-        track: swAttr.media_title || "—",
+        track: swAttr.media_title || "â€”",
         artist: swAttr.media_artist || "",
         art: swAttr.entity_picture || swAttr.media_image || null,
         playing: on,
@@ -882,7 +882,7 @@ class HueMusicSyncCard extends HTMLElement {
     };
   }
 
-  /* ── album-art colour extraction (client-side fallback) ── */
+  /* â”€â”€ album-art colour extraction (client-side fallback) â”€â”€ */
   _maybeExtractAlbum(m) {
     // If the integration already publishes album colours, never extract.
     if (m.colour && m.colour.albumFromIntegration) { this._artKey = null; return; }
@@ -914,7 +914,7 @@ class HueMusicSyncCard extends HTMLElement {
     img.src = url;
   }
 
-  /* ── service calls (no-op in demo) ── */
+  /* â”€â”€ service calls (no-op in demo) â”€â”€ */
   _callSwitch(area, on) {
     if (area.switch && this._hass) {
       this._hass.callService("switch", on ? "turn_on" : "turn_off", { entity_id: area.switch });
@@ -937,7 +937,7 @@ class HueMusicSyncCard extends HTMLElement {
     }
   }
 
-  /* ───────────────────────── Render ───────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   _render() {
     if (!this._config) return;
     if (this._cal) return; // don't tear the DOM down mid-calibration
@@ -1039,7 +1039,7 @@ class HueMusicSyncCard extends HTMLElement {
 
     const brightMini = document.createElement("div");
     brightMini.className = "hue-bright-mini";
-    brightMini.innerHTML = `<span class="hue-bright-mini-icon">☀</span><span>${Math.round(m.brightness.value)}%</span>`;
+    brightMini.innerHTML = `<span class="hue-bright-mini-icon">â˜€</span><span>${Math.round(m.brightness.value)}%</span>`;
     heroNow.appendChild(brightMini);
     hero.appendChild(heroNow);
 
@@ -1060,9 +1060,9 @@ class HueMusicSyncCard extends HTMLElement {
         b.addEventListener("click", () => svc(service));
         return b;
       };
-      tr.appendChild(mkBtn("⏮", "media_previous_track", "Previous track"));
-      tr.appendChild(mkBtn(m.now.playing ? "⏸" : "▶", "media_play_pause", "Play / pause"));
-      tr.appendChild(mkBtn("⏭", "media_next_track", "Next track"));
+      tr.appendChild(mkBtn("â®", "media_previous_track", "Previous track"));
+      tr.appendChild(mkBtn(m.now.playing ? "â¸" : "â–¶", "media_play_pause", "Play / pause"));
+      tr.appendChild(mkBtn("â­", "media_next_track", "Next track"));
       const time = document.createElement("div");
       time.className = "hue-tr-time";
       this._trTime = time;
@@ -1190,7 +1190,7 @@ class HueMusicSyncCard extends HTMLElement {
     });
   }
 
-  /* ── room mirror (live lamp stage) ── */
+  /* â”€â”€ room mirror (live lamp stage) â”€â”€ */
   _syncStage(meta) {
     const stage = this._stageNode;
     if (!stage) return;
@@ -1271,7 +1271,7 @@ class HueMusicSyncCard extends HTMLElement {
     }
   }
 
-  /* ── song-structure timeline ── */
+  /* â”€â”€ song-structure timeline â”€â”€ */
   _syncTimeline(meta) {
     const tl = this._tlNode;
     if (!tl) return;
@@ -1311,7 +1311,7 @@ class HueMusicSyncCard extends HTMLElement {
       if (pos >= s.start && pos < s.end) current = s;
       s.node.classList.toggle("past", s.end <= pos);
     }
-    // Section change into a clearly louder one: the drop landed — bloom.
+    // Section change into a clearly louder one: the drop landed â€” bloom.
     if (current && current !== this._curSec) {
       if (this._curSec && current.energy > this._curSec.energy + 0.15) {
         this._bloom = 1;
@@ -1329,7 +1329,7 @@ class HueMusicSyncCard extends HTMLElement {
     }
   }
 
-  /* ── album-art application (preload-validated) ── */
+  /* â”€â”€ album-art application (preload-validated) â”€â”€ */
   _applyArt(url) {
     if (!url) {
       // No artwork: the cover keeps its placeholder gradient and the hero
@@ -1362,7 +1362,7 @@ class HueMusicSyncCard extends HTMLElement {
     img.src = url;
   }
 
-  /* ── primitives ── */
+  /* â”€â”€ primitives â”€â”€ */
   _power(m, accent) {
     const btn = document.createElement("button");
     btn.className = "hue-power" + (m.on ? " on" : "");
@@ -1512,7 +1512,7 @@ class HueMusicSyncCard extends HTMLElement {
     row.className = "hue-slider-row";
     const icon = document.createElement("span");
     icon.className = "hue-slider-icon";
-    icon.textContent = "☀";
+    icon.textContent = "â˜€";
     row.appendChild(icon);
 
     const slider = document.createElement("div");
@@ -1613,13 +1613,13 @@ class HueMusicSyncCard extends HTMLElement {
     readout.appendChild(num);
     readout.appendChild(unit);
 
-    wrap.appendChild(mk("−", -step, "Earlier"));
+    wrap.appendChild(mk("âˆ’", -step, "Earlier"));
     wrap.appendChild(readout);
     wrap.appendChild(mk("+", step, "Later"));
     // Tap-to-sync: calibrate the offset by tapping along with the music.
     const tap = document.createElement("button");
     tap.className = "hue-step";
-    tap.textContent = "♪";
+    tap.textContent = "â™ª";
     tap.title = "Tap to sync";
     tap.setAttribute("aria-label", "Calibrate timing by tapping the beat");
     tap.addEventListener("click", () => this._startCal(m));
@@ -1627,7 +1627,7 @@ class HueMusicSyncCard extends HTMLElement {
     return wrap;
   }
 
-  /* ── tap-to-sync calibration ── */
+  /* â”€â”€ tap-to-sync calibration â”€â”€ */
   _startCal(m) {
     if (!this._cardNode || this._cal) return;
     const p = this._play;
@@ -1712,7 +1712,7 @@ class HueMusicSyncCard extends HTMLElement {
     }
   }
 
-  /* ───────────────────────── Visualizer loop ───────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Visualizer loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   _loop(now) {
     this._raf = requestAnimationFrame(this._loop);
     if (this._visible === false) return; // off-screen: skip all DOM work

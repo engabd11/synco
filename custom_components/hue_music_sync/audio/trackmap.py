@@ -199,10 +199,13 @@ class TrackMap:
             and int(np.searchsorted(beats, prev_pos, side="right")) != i
         )
         beat_idx = (idx_prev - self.downbeat) % 4
-        # Accent of the upcoming beat, so anticipatory effects can size each
-        # beat by how hard the song actually hits it (the Hue+Spotify feel).
+        # Accent of the upcoming beat (anticipatory waves) and of the beat that
+        # just started (at-beat flashes) — the Hue+Spotify "knows the future"
+        # feel, exact per beat because the whole track was analysed.
         next_idx = min(self.accents.size - 1, max(0, idx_prev + 1))
         accent = float(self.accents[next_idx]) if self.accents.size else 1.0
+        now_idx = min(self.accents.size - 1, max(0, idx_prev))
+        accent_now = float(self.accents[now_idx]) if self.accents.size else 1.0
         return BeatGrid(
             bpm=60.0 / period,
             confidence=self.confidence,
@@ -214,6 +217,8 @@ class TrackMap:
             bar_phase=(beat_idx + phase) / 4.0,
             predicted_beat=bool(crossed),
             accent=accent,
+            accent_now=accent_now,
+            beat_in_bar=beat_idx,
         )
 
     def section_at(self, pos: float) -> Section | None:
@@ -259,9 +264,14 @@ class EnvelopeExtractor:
             self._named_bins.append((lo_i, max(lo_i + 1, hi_i)))
         self._tail = np.zeros(0, dtype=np.float32)
         self._prev_log: np.ndarray | None = None
+        self._prev_lin: np.ndarray | None = None
         self.env: list[float] = []  # SuperFlux onset envelope per frame
         self.bass_env: list[float] = []  # bass-band log-flux per frame
         self.mid_env: list[float] = []  # mid-band (guitar/snare) log-flux
+        # Per-frame linear-domain mid dominance (same gate as the live
+        # detector): without it the offline mid stream fires on every kick's
+        # attack splash, and map-driven "guitar" lights pop on the kicks.
+        self.mid_dom: list[bool] = []
         self.rms: list[float] = []
         self.bands: list[np.ndarray] = []  # linear filterbank means per frame
         self.named_bands: list[np.ndarray] = []  # the 5 output bands per frame
@@ -285,15 +295,25 @@ class EnvelopeExtractor:
             prev = np.vstack([self._prev_log[None, :], logb[:-1]])
         else:
             prev = np.vstack([logb[:1], logb[:-1]])
+        # SuperFlux on all three streams (matches the live analyzer): the
+        # max-filtered reference also kills a low tone's leakage-skirt wobble
+        # in the band-limited kick/guitar envelopes, not just broadband.
         diff = logb - max_filter_freq(prev)
         np.maximum(diff, 0.0, out=diff)
         self.env.extend(np.sum(diff, axis=1).tolist())
-        bdiff = logb[:, : self.n_bass] - prev[:, : self.n_bass]
-        np.maximum(bdiff, 0.0, out=bdiff)
-        self.bass_env.extend(np.sum(bdiff, axis=1).tolist())
-        mdiff = logb[:, self.n_bass : self.n_mid] - prev[:, self.n_bass : self.n_mid]
-        np.maximum(mdiff, 0.0, out=mdiff)
-        self.mid_env.extend(np.sum(mdiff, axis=1).tolist())
+        self.bass_env.extend(np.sum(diff[:, : self.n_bass], axis=1).tolist())
+        self.mid_env.extend(np.sum(diff[:, self.n_bass : self.n_mid], axis=1).tolist())
+        # Linear-domain onset shares (leakage-proof, as in the live analyzer).
+        if self._prev_lin is not None:
+            prev_lin = np.vstack([self._prev_lin[None, :], lin[:-1]])
+        else:
+            prev_lin = np.vstack([lin[:1], lin[:-1]])
+        ldiff = np.maximum(lin - prev_lin, 0.0)
+        lin_pos = np.maximum(ldiff.sum(axis=1), 1e-9)
+        bass_share = ldiff[:, : self.n_bass].sum(axis=1) / lin_pos
+        mid_share = ldiff[:, self.n_bass : self.n_mid].sum(axis=1) / lin_pos
+        self.mid_dom.extend(((mid_share >= 0.30) & (mid_share > bass_share)).tolist())
+        self._prev_lin = lin[-1]
         self.rms.extend(np.sqrt(np.mean(frames * frames, axis=1)).tolist())
         self.bands.extend(lin)
         # The 5 named output bands (same maths as the live analyzer: RMS of the
@@ -382,11 +402,14 @@ def _pick_onsets(
     sensitivity: float = 1.5,
     min_gap: int = 6,
     floor: float = 2.5,
+    allowed: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Offline onset peak-picking with a rolling adaptive threshold.
 
     Returns ``(times, accents)`` — onset timestamps (s) and 0..1 accents — the
-    scheduled equivalent of the live mid-onset detector.
+    scheduled equivalent of the live mid-onset detector. ``allowed`` is an
+    optional per-frame eligibility mask (e.g. mid-dominance); it is dilated by
+    one frame each way since a peak can land a hop off its dominant frame.
     """
     n = env.size
     if n < 64:
@@ -397,6 +420,9 @@ def _pick_onsets(
     var = np.convolve(env * env, kernel, mode="same") - mean * mean
     thr = np.maximum(mean + sensitivity * np.sqrt(np.maximum(var, 0.0)), floor)
     is_peak = (env > thr) & (env >= np.roll(env, 1)) & (env >= np.roll(env, -1))
+    if allowed is not None and allowed.size == n:
+        ok = allowed | np.roll(allowed, 1) | np.roll(allowed, -1)
+        is_peak &= ok
     cand = np.where(is_peak)[0]
     picked: list[int] = []
     last = -min_gap
@@ -410,6 +436,84 @@ def _pick_onsets(
     strength = np.minimum(3.0, env[idx] / np.maximum(thr[idx], 1e-9))
     accents = np.clip((strength - 1.0) / 2.0, 0.0, 1.0)
     return idx.astype(np.float64) * _FRAME_PERIOD, accents
+
+
+def _percussive_filter(
+    times: np.ndarray,
+    accents: np.ndarray,
+    energy: np.ndarray,
+    max_attack: int = 3,
+    ratio: float = 1.05,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Keep only onsets whose energy attack completed within ``max_attack`` hops.
+
+    The offline twin of the live mid-attack state machine: a strum or snare
+    reaches its energy peak as fast as the analysis window fills (~3 hops),
+    while a sung vowel swells over 80-150 ms — those are the syllable "onsets"
+    that made mid lights pop on the singing.
+    """
+    if times.size == 0:
+        return times, accents
+    keep = np.zeros(times.size, dtype=bool)
+    n = energy.size
+    for k, t in enumerate(times):
+        i = int(round(t / _FRAME_PERIOD))
+        if i >= n:
+            continue
+        peak = i + int(np.argmax(energy[i : min(n, i + 5)]))
+        rise = 0
+        j = peak
+        while j > 0 and energy[j] > energy[j - 1] * ratio:
+            rise += 1
+            j -= 1
+            if rise > max_attack + 2:
+                break
+        keep[k] = 1 <= rise <= max_attack
+    return times[keep], accents[keep]
+
+
+def _quantize_to_eighths(
+    times: np.ndarray,
+    accents: np.ndarray,
+    beats: np.ndarray,
+    tolerance: float = 0.12,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Keep only onsets within ``tolerance`` beats of an eighth-note slot.
+
+    Guitar riffs and snares live on the eighth grid (on-beats and off-beats —
+    syncopation included); vocal syllables and ornaments float between slots.
+    Filtering the scheduled mid onsets to the grid is the strongest "stop
+    popping on the singing" guard the offline analysis can apply.
+    """
+    if times.size == 0 or beats.size < 2:
+        return times, accents
+    mids = beats[:-1] + np.diff(beats) / 2.0
+    slots = np.sort(np.concatenate([beats, mids]))
+    period = float(np.median(np.diff(beats)))
+    j = np.searchsorted(slots, times)
+    lo = slots[np.clip(j - 1, 0, slots.size - 1)]
+    hi = slots[np.clip(j, 0, slots.size - 1)]
+    dist = np.minimum(np.abs(times - lo), np.abs(times - hi))
+    keep = dist <= tolerance * period
+    return times[keep], accents[keep]
+
+
+def _rolling_accents(raw: np.ndarray, half_window: int = 8) -> np.ndarray:
+    """Per-beat accents normalised by a rolling p90 of the surrounding beats.
+
+    Normalising by the single loudest onset of the whole track (the old way)
+    let one drop impact compress every ordinary kick to ~0.3 — the show's
+    pulses all came out half-strength. A rolling reference keeps "strong"
+    meaning strong *relative to the passage*, so the verse still has visible
+    hierarchy and the chorus still has headroom.
+    """
+    n = raw.size
+    out = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        seg = raw[max(0, i - half_window) : min(n, i + half_window + 1)]
+        ref = float(np.percentile(seg, 90))
+        out[i] = min(1.0, float(raw[i]) / ref) if ref > 1e-9 else 0.0
+    return out
 
 
 def _find_downbeat(bass_env: np.ndarray, beat_frames: np.ndarray) -> int:
@@ -501,8 +605,7 @@ def _finish_analysis(ex: EnvelopeExtractor) -> TrackMap | None:
         return None
     beats = beat_frames.astype(np.float64) * _FRAME_PERIOD
     accents_raw = env[np.minimum(beat_frames, env.size - 1)]
-    peak = float(accents_raw.max()) or 1.0
-    accents = (accents_raw / peak).astype(np.float64)
+    accents = _rolling_accents(accents_raw)
     downbeat = _find_downbeat(bass_env, beat_frames)
     # Refine the bpm from the actual tracked beats (more honest than the lag).
     intervals = np.diff(beats)
@@ -510,7 +613,11 @@ def _finish_analysis(ex: EnvelopeExtractor) -> TrackMap | None:
         bpm = float(60.0 / np.median(intervals))
     sections = _segment_sections(bands, rms, duration)
     mid_env = np.asarray(ex.mid_env, dtype=np.float64)
-    mid_beats, mid_accents = _pick_onsets(mid_env)
+    mid_dom = np.asarray(ex.mid_dom, dtype=bool)
+    mid_beats, mid_accents = _pick_onsets(mid_env, allowed=mid_dom)
+    mid_energy = bands[:, ex.n_bass : ex.n_mid].sum(axis=1).astype(np.float64)
+    mid_beats, mid_accents = _percussive_filter(mid_beats, mid_accents, mid_energy)
+    mid_beats, mid_accents = _quantize_to_eighths(mid_beats, mid_accents, beats)
     return TrackMap(
         duration=duration,
         bpm=bpm,

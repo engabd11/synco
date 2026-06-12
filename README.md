@@ -24,9 +24,17 @@ to the bridge over the Hue Entertainment API (~40 Hz over DTLS), and a bundled
   exact beat times from a full-track beat tracker, real downbeats, and the
   song's sections. Beats are *scheduled*, not guessed, and the choreography
   holds back in the verse so the chorus visibly arrives.
+- **The schedule conducts**: once the tempo is locked, *every* beat fires a
+  pulse - sized by its accent (relative to the passage, not the whole track)
+  and its place in the bar (downbeats hit hardest) - the same never-miss
+  metronome feel as Samsung Music Sync and Hue+Spotify. Live detection only
+  enlarges a pulse; it is never required, so dense, loud choruses cannot
+  silence the show.
 - **Kick-true triggering**: live analysis uses SuperFlux onset detection with a
   dedicated bass/kick stream, so vocals, hi-hats and vibrato no longer fire the
-  lights - flashes, wavefronts and colour steps follow the actual pulse.
+  lights. Guitar/snare pops are attack-verified (a strum peaks in ~60 ms, a
+  sung vowel swells far slower) and quantised to the eighth-note grid, so the
+  mid lights play the riff, not the singing.
 - **Automatic time alignment**: the Snapcast server's playout buffer is read
   from its wire protocol and compensated exactly, so the lights land on the
   audible beat at any tempo without manual trimming.
@@ -121,9 +129,9 @@ Each area becomes a device with a **switch** plus the controls below.
   every few bars. Flash-limited.
 - **Intense** - *unrestrained*: bass and guitar split the room 2:1 and snap
   hard to full; roles rotate as the song plays.
-- **Extreme** - *unrestrained*: a dark room where only the BIG kicks count -
-  each one slams every lamp and launches a fast wavefront with hard colour
-  jumps.
+- **Extreme** - *unrestrained*: a dark room where only the strongest accents
+  count (top of the passage, by rank - the bar's downbeat always lands) - each
+  one slams every lamp and launches a fast wavefront with hard colour jumps.
 
 **Effect** swaps the renderer: **Music** (default), **Movies** (calm
 soundtrack-following backlight) or **Fireworks**. **Colour** picks the palette

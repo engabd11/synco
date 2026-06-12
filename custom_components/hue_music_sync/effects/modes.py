@@ -64,6 +64,12 @@ class ModeParams:
     vocal_dim: float = 0.08    # very dim base of vocal-role lights
     role_rotate_beats: int = 0  # swap role assignments every N beats (0 = never)
     hard_snap: bool = False    # snap on top of the wave instead of yielding to it
+    # --- scheduled (grid-locked) pulse shaping --------------------------------
+    # When the tempo grid is locked, EVERY beat fires a pulse (the Samsung /
+    # Hue+Spotify metronome feel); these shape how big each one is.
+    accent_floor: float = 0.0   # accents below this barely register (selectivity)
+    weak_pulse: float = 0.30    # fraction of beat_gain a zero-accent beat still gets
+    downbeat_pulse: float = 0.0  # minimum pulse weight on bar downbeats
 
 
 MODE_PARAMS: dict[SyncMode, ModeParams] = {
@@ -84,6 +90,7 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
         colour_beat_step=0.030, colour_lerp=0.30,
         wave_gain=0.85, wave_speed=2.2, wave_width=0.30, height_freq=0.45,
         depth_wash=0.10, anticipation_ms=80, drop_boost=0.50, build_desat=0.50,
+        weak_pulse=0.25,
     ),
     # The band on your lights: bass lights snap on kicks, guitar lights pop on
     # mid onsets, and vocal lights shimmer dimly with the singing — assignments
@@ -111,7 +118,7 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
         wave_gain=1.1, wave_speed=2.6, wave_width=0.34,
         anticipation_ms=90, drop_boost=0.80, build_desat=0.55,
         role_mix=(0.67, 0.33, 0.0), mid_gain=1.0, mid_threshold=1.15,
-        role_rotate_beats=16, hard_snap=True,
+        role_rotate_beats=16, hard_snap=True, weak_pulse=0.35,
     ),
     # UNRESTRAINED maximum: a dark room where every light is bass and only the
     # BIG kicks count (high threshold) — each one slams every lamp toward full
@@ -125,6 +132,10 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
         wave_gain=1.6, wave_speed=3.6, wave_width=0.22,
         anticipation_ms=90, drop_boost=1.0, build_desat=0.60,
         role_mix=(1.0, 0.0, 0.0), role_rotate_beats=8, hard_snap=True,
+        # Selective by musical rank, not by a fragile absolute threshold:
+        # ordinary beats stay dark, top-quartile accents slam, and the bar's
+        # downbeat always lands so the room never loses the pulse.
+        accent_floor=0.70, weak_pulse=0.0, downbeat_pulse=0.85,
     ),
 }
 
@@ -212,6 +223,34 @@ def beat_colour_advance(params: ModeParams, strength: float, bass: float) -> flo
     return params.colour_beat_step * min(1.5, 0.5 + strength) * weight
 
 
+# Musical pulse hierarchy across the bar: the downbeat hits hardest, beat 3
+# carries, beats 2/4 land softer — the 1:1-but-musical pulse of the references.
+_BAR_W = (1.0, 0.72, 0.86, 0.72)
+
+
+def pulse_weight(p: ModeParams, accent: float, beat_in_bar: int) -> float:
+    """0..1 size of a scheduled beat pulse from its accent and bar position.
+
+    Every locked beat gets at least ``weak_pulse`` (the show never skips the
+    pulse — missed beats are what reads as "random"), accents scale the rest,
+    ``accent_floor`` makes selective modes ignore ordinary beats, and
+    ``downbeat_pulse`` guarantees the bar's "one" still lands in those modes.
+    """
+    a = (accent - p.accent_floor) / max(1e-6, 1.0 - p.accent_floor)
+    a = max(0.0, min(1.0, a))
+    w = p.weak_pulse + (1.0 - p.weak_pulse) * a
+    if beat_in_bar == 0:
+        w = max(w, p.downbeat_pulse)
+    return w * _BAR_W[beat_in_bar % 4]
+
+
+def beat_pulse(p: ModeParams, accent: float, beat_in_bar: int, bass: float) -> float:
+    """Snap a bass-role light gets from a *scheduled* (grid-locked) beat."""
+    if p.beat_gain <= 0.0:
+        return 0.0
+    return p.beat_gain * pulse_weight(p, accent, beat_in_bar) * (0.6 + 0.4 * bass)
+
+
 def accent_knee(strength: float, threshold: float) -> float:
     """Continuous accent gate: 0 below (thr−0.4), 1 above (thr+0.4).
 
@@ -277,9 +316,9 @@ def render(engine, frame) -> dict[int, tuple[RGB, float]]:
     # Only the head-room above the floor is scaled, so a "no dimming" mode
     # (base == floor) holds perfectly steady through the whole song.
     lvl = engine.section_level
-    base_mul = 0.75 + 0.25 * lvl
-    env_mul = 0.7 + 0.3 * lvl
-    wave_mul = 0.6 + 0.4 * lvl
+    base_mul = 0.65 + 0.35 * lvl
+    env_mul = 0.6 + 0.4 * lvl
+    wave_mul = 0.5 + 0.5 * lvl
     span = 0.4 + 0.6 * lvl
     base_term = p.floor + (p.base - p.floor) * base_mul
     # Rotating modes also reseed the colour layout on each rotation (an
