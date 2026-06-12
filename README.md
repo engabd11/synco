@@ -135,8 +135,28 @@ The **Ambient Glow** card is bundled and auto-registered, so it appears in the
 dashboard card picker as **Hue Synco Card** with no manual resource step. It
 finds the playing artwork and title by itself (via the `source_player` the
 integration publishes), shows the album cover with a blurred-art hero
-background, recolours its theme to the extracted palette, and runs a visualiser
-locked to the real tempo and beat phase:
+background, and recolours its theme to the extracted palette.
+
+While an area is syncing, the card connects to the integration's **live
+WebSocket feed** (no recorder traffic) and comes alive:
+
+- the **visualiser bars are the real audio analysis** (band energies + kicks
+  at ~20 Hz), not a simulation;
+- a **room mirror** shows your actual lamps, laid out by their real positions,
+  glowing in the exact colours being streamed - with **instrument-role rings**
+  (bass / guitar / vocal) that visibly trade places as the song plays;
+- a **song-structure timeline** draws the track's energy silhouette with a
+  playhead; the next loud section pulses as the drop approaches, and the whole
+  card blooms when it lands;
+- **transport controls** (previous / play-pause / next) and a time readout
+  drive the playing player directly;
+- a **tap-to-sync calibrator** (the ♪ button next to the timing trim): tap
+  along with what you hear for eight beats and the card writes the measured
+  offset straight to the timing slider;
+- each **intensity option shows a micro-preview** of its character, long
+  titles marquee, paused playback melts into a slow palette drift, and the
+  card honours `prefers-reduced-motion` and pauses all animation while
+  off-screen.
 
 ```yaml
 type: custom:hue-music-sync-card

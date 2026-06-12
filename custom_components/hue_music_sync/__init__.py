@@ -165,6 +165,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN].setdefault(DATA_AREA_INDEX, {})
     await _register_frontend_card(hass)
 
+    # Live feed for the bundled card (real visualizer / room mirror / timeline).
+    from .ws import async_register_ws
+
+    async_register_ws(hass)
+
     if "music_assistant" not in hass.config.components:
         _LOGGER.warning(
             "Music Assistant integration not detected; music sync needs it to "

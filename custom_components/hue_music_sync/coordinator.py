@@ -34,6 +34,7 @@ from .color.album_art import extract_palette
 from .const import (
     ANALYSIS_HOP,
     ANALYSIS_SAMPLE_RATE,
+    BANDS,
     CONF_AREAS,
     CONF_BRIGHTNESS,
     CONF_COLOUR,
@@ -150,6 +151,8 @@ class SyncSession:
         snapserver_host: str = "",
         restore_lights: bool = False,
         on_finished: Callable[[], None] | None = None,
+        ws_broadcast: Callable[[dict], None] | None = None,
+        ws_active: Callable[[], bool] | None = None,
     ) -> None:
         self._hass = hass
         self._bridge = bridge
@@ -160,6 +163,10 @@ class SyncSession:
         self._restore_lights = restore_lights
         self._light_snapshot: list[dict] | None = None
         self._on_finished = on_finished
+        # Live card feed: only built/sent while at least one card listens.
+        self._ws_broadcast = ws_broadcast
+        self._ws_active = ws_active or (lambda: False)
+        self._ws_last = 0.0
 
         self._encoder = HueStreamEncoder(config.id)
         self._stream = DtlsStream(host, app_key, client_key)
@@ -362,6 +369,8 @@ class SyncSession:
                     self._last_publish = now
                     try:
                         self._maybe_publish()
+                        if self._ws_broadcast is not None and self._ws_active():
+                            self._ws_broadcast(self.ws_meta())
                     except Exception:  # noqa: BLE001
                         _LOGGER.debug(
                             "Card attribute publish failed for %s",
@@ -422,7 +431,10 @@ class SyncSession:
                         beatgrid = map_grid
                     self._last_beatgrid = beatgrid
                     colors = self._engine.render(frame, period, beatgrid, structure)
-                    await self._send_timed(colors)
+                    features = (
+                        self._ws_features(frame) if self._ws_active() else None
+                    )
+                    await self._send_timed(colors, features)
                 except ConnectionError:
                     # DTLS channel dropped: try to recover instead of ending sync.
                     if not await self._reconnect_stream():
@@ -462,7 +474,7 @@ class SyncSession:
         # Gentle dim glow drifting through the palette (paused / waiting for audio).
         await self._safe_send(self._engine.render_idle(phase))
 
-    async def _send_timed(self, colors: dict) -> None:
+    async def _send_timed(self, colors: dict, features: dict | None = None) -> None:
         """Send the frame through the timing-offset delay buffer.
 
         The baseline delay aligns the lights with the *audible* sound: a source
@@ -471,23 +483,25 @@ class SyncSession:
         frames for the lead minus the light pipeline's own latency. Sources
         already position-locked to playback use the small fixed buffer instead.
         The user's timing offset remains a fine trim on top (positive = lights
-        later; negative = earlier, within the baseline buffer).
+        later; negative = earlier, within the baseline buffer). ``features``
+        (the live-card payload for this frame) rides the same buffer so the
+        card's visualizer matches what the room is showing/hearing.
         """
         lead_ms = getattr(self._source, "playback_lead_ms", 0) or 0
         base_ms = max(0, lead_ms - LIGHT_PIPELINE_MS) if lead_ms > 0 else TIMING_BUFFER_MS
         delay_s = max(0.0, (base_ms + self._settings.timing_ms) / 1000.0)
         if delay_s <= 0.001:
             self._delay_buf.clear()
-            await self._safe_send(colors)
+            await self._safe_send(colors, features)
             return
         now = time.monotonic()
-        self._delay_buf.append((now, colors))
+        self._delay_buf.append((now, (colors, features)))
         target = now - delay_s
         send = None
         while self._delay_buf and self._delay_buf[0][0] <= target:
             send = self._delay_buf.popleft()[1]
         if send is not None:
-            await self._safe_send(send)  # else still filling the buffer; hold
+            await self._safe_send(*send)  # else still filling the buffer; hold
 
     def _unrestrained(self) -> bool:
         """True in the explicit club modes that bypass the flash limiter."""
@@ -496,7 +510,11 @@ class SyncSession:
             and self._settings.effect is not SyncEffect.MOVIES
         )
 
-    async def _safe_send(self, colors: dict[int, tuple[float, float, float]]) -> None:
+    async def _safe_send(
+        self,
+        colors: dict[int, tuple[float, float, float]],
+        features: dict | None = None,
+    ) -> None:
         # ConnectionError propagates to the run loop, which attempts a reconnect.
         now = time.monotonic()
         dt = 0.025 if self._last_safe_t is None else max(0.0, now - self._last_safe_t)
@@ -510,6 +528,79 @@ class SyncSession:
         # Split large areas across packets (the bridge caps a packet at ~10 lights).
         for frame in self._encoder.build_packets(colors):
             await self._stream.send(frame)
+        self._ws_stream(colors, features)
+
+    # -- live card feed --------------------------------------------------------
+
+    @staticmethod
+    def _ws_features(frame) -> dict:
+        """The per-frame analysis the card's live visualizer runs on."""
+        return {
+            "bands": [round(frame.bands.get(n, 0.0), 3) for n in BANDS],
+            "energy": round(frame.energy, 3),
+            "beat": bool(frame.bass_beat),
+            "strength": round(frame.bass_strength, 2),
+        }
+
+    def _ws_stream(self, colors: dict, features: dict | None) -> None:
+        """Broadcast the emitted frame to subscribed cards (~20 Hz, throttled)."""
+        if self._ws_broadcast is None or not self._ws_active():
+            return
+        now = time.monotonic()
+        if now - self._ws_last < 0.05:
+            return
+        self._ws_last = now
+        payload: dict = {
+            "type": "stream",
+            "lights": {
+                str(cid): "#%02x%02x%02x"
+                % tuple(int(max(0.0, min(1.0, v)) * 255) for v in rgb)
+                for cid, rgb in colors.items()
+            },
+            "roles": {str(c): r for c, r in self._engine.roles.items()},
+        }
+        if features:
+            payload.update(features)
+        self._ws_broadcast(payload)
+
+    def ws_meta(self) -> dict:
+        """The slow picture (~1 Hz): lamp layout, sections, tempo, position."""
+        payload: dict = {"type": "meta"}
+        payload["positions"] = {
+            str(cid): [round(info["nx"], 3), round(info["ny"], 3), round(info["nz"], 3)]
+            for cid, info in self._engine.cmap.items()
+        }
+        bg = self._last_beatgrid
+        if bg is not None and bg.locked and bg.bpm > 0:
+            payload["bpm"] = round(bg.bpm, 1)
+        src = self._source
+        if src is not None:
+            tm = self._mapper.get(src.track_id)
+            if tm is not None:
+                payload["sections"] = [
+                    [round(s.start, 1), round(s.end, 1), round(s.energy, 2)]
+                    for s in tm.sections
+                ]
+                payload["duration"] = round(tm.duration, 1)
+            state = self._hass.states.get(src.entity_id)
+            if state is not None:
+                payload["playing"] = state.state == "playing"
+                pos = state.attributes.get("media_position")
+                if pos is not None:
+                    live = float(pos)
+                    updated = state.attributes.get("media_position_updated_at")
+                    if state.state == "playing" and updated is not None:
+                        try:
+                            live += max(
+                                0.0, (dt_util.utcnow() - updated).total_seconds()
+                            )
+                        except (TypeError, ValueError):
+                            pass
+                    payload["position"] = round(live, 2)
+                duration = state.attributes.get("media_duration")
+                if duration:
+                    payload["duration"] = float(duration)
+        return payload
 
     async def _reconnect_stream(self) -> bool:
         """Re-establish a dropped DTLS channel with backoff; True on success."""
@@ -815,6 +906,38 @@ class SyncManager:
         )
         self._sessions: dict[str, SyncSession] = {}
         self._settings: dict[str, AreaSettings] = self._load_settings()
+        # Live-feed subscribers per area (dashboard cards over the WS API).
+        self._ws_subs: dict[str, set[Callable[[dict], None]]] = {}
+
+    # -- live WebSocket feed -------------------------------------------------
+
+    def ws_subscribe(self, area_id: str, cb: Callable[[dict], None]) -> Callable[[], None]:
+        """Register a live-feed subscriber; returns an unsubscribe callable."""
+        self._ws_subs.setdefault(area_id, set()).add(cb)
+
+        def _unsub() -> None:
+            subs = self._ws_subs.get(area_id)
+            if subs is not None:
+                subs.discard(cb)
+                if not subs:
+                    self._ws_subs.pop(area_id, None)
+
+        return _unsub
+
+    def ws_has_subs(self, area_id: str) -> bool:
+        return bool(self._ws_subs.get(area_id))
+
+    def ws_broadcast(self, area_id: str, payload: dict) -> None:
+        for cb in tuple(self._ws_subs.get(area_id, ())):
+            try:
+                cb(payload)
+            except Exception:  # noqa: BLE001 - one dead socket can't stop the rest
+                pass
+
+    def ws_snapshot(self, area_id: str) -> dict | None:
+        """The meta payload for a subscriber joining mid-session."""
+        session = self._sessions.get(area_id)
+        return session.ws_meta() if session is not None else None
 
     def _load_settings(self) -> dict[str, AreaSettings]:
         stored = self.entry.options.get("area_settings", {})
@@ -891,6 +1014,8 @@ class SyncManager:
             snapserver_host=self._snapserver_host,
             restore_lights=self._restore_lights,
             on_finished=lambda: self._on_session_finished(area_id),
+            ws_broadcast=lambda payload: self.ws_broadcast(area_id, payload),
+            ws_active=lambda: self.ws_has_subs(area_id),
         )
         await session.start()
         self._sessions[area_id] = session
