@@ -1,8 +1,9 @@
 """Grid-first "conductor" behaviour: scheduled pulses, accents, vocal guards.
 
-The references (Samsung Music Sync, Hue+Spotify) never skip a beat: once the
-tempo is known the lights pulse on EVERY beat, and analysis only sizes each
-pulse. These tests pin that architecture and its guard rails.
+Once the tempo is known the *schedule* conducts: every grid beat is an event,
+sized by its accent and the rank-based highlight selection (uniform passages
+fire every beat — every kick IS the pulse there; dynamic mixes fire only the
+standout ones). These tests pin that architecture and its guard rails.
 """
 
 from __future__ import annotations
@@ -65,8 +66,10 @@ def test_locked_grid_fires_pulse_without_detected_onset():
 
 
 def test_every_locked_beat_pulses_no_misses():
-    # 16 consecutive grid beats -> 16 visible bass-light rises, zero skipped —
-    # with NO detected onsets at all (frame.bass_beat always False).
+    # 16 consecutive grid beats of EQUAL accent -> 16 visible bass-light rises,
+    # zero skipped, with NO detected onsets at all (frame.bass_beat always
+    # False). Uniform accents all rank as highlights: in a flat passage every
+    # kick IS the pulse — selectivity must not eat a steady four-to-the-floor.
     eng = EffectEngine(_channels(3))
     eng.set_mode(SyncMode.INTENSE)  # hard_snap: the flash carries the beat
     for _ in range(10):
@@ -104,16 +107,20 @@ def test_pulse_weight_downbeat_beats_offbeats():
     assert w[2] > w[1]  # beat 3 carries more than 2/4
 
 
-def test_pulse_weight_every_beat_gets_at_least_weak_pulse():
+def test_pulse_weight_non_highlights_still_tick_in_intense():
     p = MODE_PARAMS[SyncMode.INTENSE]
-    assert pulse_weight(p, 0.0, 1) > 0.2  # zero-accent beat still pulses
+    # A beat that did NOT rank as a highlight keeps the quiet metronome tick.
+    assert 0.0 < pulse_weight(p, 0.0, 1, highlight=False) < 0.3
+    # A ranked highlight always lands a substantial pulse, even if its
+    # absolute accent is small (quiet passages still get their hits).
+    assert pulse_weight(p, 0.0, 1, highlight=True) > 0.4
 
 
 def test_extreme_is_selective_but_downbeat_always_lands():
     p = MODE_PARAMS[SyncMode.EXTREME]
-    assert pulse_weight(p, 0.3, 1) == 0.0  # ordinary off-down beat: dark
-    assert pulse_weight(p, 0.3, 0) >= 0.8  # the bar's "one" still lands
-    assert pulse_weight(p, 0.95, 2) > 0.5  # top accents slam anywhere
+    assert pulse_weight(p, 0.3, 1, highlight=False) == 0.0  # ordinary beat: dark
+    assert pulse_weight(p, 0.3, 0, highlight=False) >= 0.8  # the "one" still lands
+    assert pulse_weight(p, 0.95, 2, highlight=True) > 0.5  # top accents slam anywhere
 
 
 # --- live accent model -------------------------------------------------------

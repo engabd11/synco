@@ -106,7 +106,7 @@ class SyncMode(StrEnum):
     MEDIUM = "medium"  # gentle: stays bright, sways softly with the music
     HIGH = "high"  # dims to ~30%, the kick sweeps the room as a wavefront
     INTENSE = "intense"  # full 0-100% dimming/brightening + shimmer
-    EXTREME = "extreme"  # club: ~1% floor to full, hard beats + fast wavefronts
+    EXTREME = "extreme"  # club: near-dark, only standout beats slam, fast waves
 
 
 class SyncEffect(StrEnum):

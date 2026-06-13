@@ -119,19 +119,27 @@ Each area becomes a device with a **switch** plus the controls below.
 | Brightness | Master brightness ceiling, 5-100% |
 | Timing offset | Fine trim, -500..+500 ms (alignment is otherwise automatic) |
 
-**Intensity** sets how the lights move relative to the brightness ceiling:
+**Intensity** sets how the lights move relative to the brightness ceiling.
+Every rung follows the same pattern - instrument roles spread across the room,
+distinct per-lamp colours that re-deal on the highlights, and only the beats
+that stand out in their passage firing - each rung just pushes it harder and
+gets choosier:
 
-- **Subtle** - no dimming at all; the colour drifts and steps with the music.
-- **Medium** - the classic club look: visible dimming, a wavefront per kick,
-  colours stepping on the beat.
+- **Subtle** - no dimming at all; the colour drifts and steps on the
+  highlights.
+- **Medium** - gentle club: a soft bass/guitar split, small pops and a soft
+  wavefront on the highlights, ordinary beats just tick.
 - **High** - the band on your lights: bass lights snap on kicks, guitar lights
   pop on mid hits, vocal lights shimmer dimly with the singing; roles rotate
   every few bars. Flash-limited.
 - **Intense** - *unrestrained*: bass and guitar split the room 2:1 and snap
-  hard to full; roles rotate as the song plays.
-- **Extreme** - *unrestrained*: a dark room where only the strongest accents
-  count (top of the passage, by rank - the bar's downbeat always lands) - each
-  one slams every lamp and launches a fast wavefront with hard colour jumps.
+  hard to full on the highlights; the passage's biggest hits take the whole
+  room.
+- **Extreme** - *unrestrained* maximum and the choosiest: a near-dark room
+  split into the full band, where only the top quarter of beats fire (the
+  bar's downbeat always lands) - each hit slams its role group to full and
+  launches a fast wavefront, the very biggest hits take every light at once,
+  and each highlight hard re-deals the per-lamp colour layout.
 
 **Effect** swaps the renderer: **Music** (default), **Movies** (calm
 soundtrack-following backlight) or **Fireworks**. **Colour** picks the palette

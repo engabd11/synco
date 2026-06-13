@@ -9,6 +9,7 @@ parametric :func:`.modes.render` driven by the active mode. Output is a
 from __future__ import annotations
 
 import math
+from collections import deque
 
 from ..audio.analyzer import AnalysisFrame
 from ..audio.structure import StructureState
@@ -22,6 +23,7 @@ from .modes import (
     MOVIE_PARAMS,
     ROLE_BASS,
     ROLE_MID,
+    ROLE_VOCAL,
     accent_knee,
     assign_roles,
     band_for_rank,
@@ -41,10 +43,11 @@ _FLASH_DECAY = 0.80  # per-frame fade of the beat flash overlay (~5 frames)
 _ENV_RISE = 0.55
 _ENV_FALL = 0.10
 
-# When the tempo grid is locked the *schedule* drives the show (every grid
-# beat fires — the Samsung/Spotify metronome). A live-detected onset may still
-# enlarge the scheduled pulse, but only within this phase distance of the
-# beat; mid-beat onsets are vocal hits or fills, not the pulse.
+# When the tempo grid is locked the *schedule* drives the show: every grid
+# beat is an event, and the highlight ranking decides which ones visibly fire.
+# A live-detected onset may still enlarge the scheduled pulse, but only within
+# this phase distance of the beat; mid-beat onsets are vocal hits or fills,
+# not the pulse.
 _ONGRID_PHASE = 0.18
 
 # Locked mid (guitar/snare) pops are quantised to the eighth-note grid: hits
@@ -97,6 +100,7 @@ class EffectEngine:
             nx, ny, nz = positions[ch.channel_id]
             self.cmap[ch.channel_id] = {
                 "norm_x": (ch.x + 1.0) / 2.0,
+                "rank": rank,
                 "xrank": rank / max(1, n - 1),
                 "band": band_for_rank(rank, n),
                 "nx": nx,
@@ -107,6 +111,8 @@ class EffectEngine:
             }
         self._waves = []
         self._wave_armed = True
+        # Rolling accents of recent beats: the highlight ranking context.
+        self._accents: deque[float] = deque(maxlen=24)
         self._state: dict[int, tuple[RGB, float]] = {
             ch.channel_id: ((0.0, 0.0, 0.0), 0.0) for ch in channels
         }
@@ -154,18 +160,45 @@ class EffectEngine:
         role_list = assign_roles(len(self._rank_ids), p.role_mix, self._role_offset)
         self.roles = dict(zip(self._rank_ids, role_list))
 
+    def _beat_highlight(self, p, accent: float, append: bool) -> bool:
+        """Is a beat with this accent a *highlight* of the current passage?
+
+        Rank-based selectivity (the apartment-sync look): the beat qualifies
+        when its accent reaches the mode's quantile of the recent beats'
+        accents. Ranking adapts where a fixed threshold goes blind — in a flat
+        four-to-the-floor passage every kick IS the pulse and all qualify,
+        while in a dynamic mix only the hits a listener would pick out do.
+        ``append`` folds the accent into the window (exactly once per beat);
+        anticipatory callers (waves) peek without appending. The beat is
+        ranked against the window *before* it joins it — counting itself
+        would let a borderline beat drag the threshold down to its own level.
+        """
+        win = self._accents
+        if p.highlight_quantile <= 0.0:
+            ok = True
+        elif len(win) < 8:  # not enough context yet: fall back to the floor
+            ok = accent >= p.accent_floor
+        else:
+            ranked = sorted(win)
+            thr = ranked[min(len(ranked) - 1, int(p.highlight_quantile * len(ranked)))]
+            ok = accent >= thr
+        if append:
+            win.append(accent)
+        return ok
+
     @staticmethod
     def _visible_event(
         frame: AnalysisFrame, beatgrid: BeatGrid | None
     ) -> tuple[float, float, bool]:
         """(strength, bass, grid_locked) of the beat driving visible accents.
 
-        **Locked: the schedule conducts.** Every grid beat fires (strength from
-        the beat's accent on the live detector's 1..3 scale) — the references
-        never skip a pulse, and a missed pulse is exactly what reads as
-        "random". A live-detected bass onset near the beat may *enlarge* the
-        pulse (the causal accent is only a prediction) but detection is never
-        required, so dense mixes can't silence the show.
+        **Locked: the schedule conducts.** Every grid beat produces an event
+        (strength from the beat's accent on the live detector's 1..3 scale);
+        how *visibly* it lands is decided downstream by the highlight ranking
+        — selective modes fire only the standout beats and let the rest tick
+        or stay dark. A live-detected bass onset near the beat may *enlarge*
+        the pulse (the causal accent is only a prediction) but detection is
+        never required, so dense mixes can't silence the show.
 
         **Unlocked: reactive fallback.** Bass onsets only — vocals and hi-hats
         live above the bass band and are what made the show feel random.
@@ -279,16 +312,20 @@ class EffectEngine:
             if self._wave_armed and beatgrid.time_to_next_beat <= antic:
                 self._wave_armed = False
                 # Sized by the upcoming beat's accent AND its bar position,
-                # through the same pulse shaping as the flashes — so selective
-                # modes (Extreme) keep their waves for the beats that matter.
+                # through the same pulse shaping AND the same highlight ranking
+                # as the flashes (peeked, not appended — the at-beat path owns
+                # the window) — selective modes only roll waves for the beats
+                # that matter; weak ticks barely ripple.
                 acc = max(0.0, min(1.0, beatgrid.accent))
                 nb = (beatgrid.beat_in_bar + 1) % 4
-                w = pulse_weight(p, acc, nb)
-                strength = (
-                    (0.45 + 1.05 * acc)
-                    * (0.35 + 0.65 * w)
-                    * beatgrid.schedule_strength
-                )
+                hl = self._beat_highlight(p, acc, append=False)
+                w = pulse_weight(p, acc, nb, hl)
+                if w > 0.0:
+                    strength = (
+                        (0.45 + 1.05 * acc)
+                        * (0.15 + 0.85 * w)
+                        * beatgrid.schedule_strength
+                    )
         elif vis_strength > 0.0:
             knee = accent_knee(vis_strength, p.beat_threshold)
             if knee > 0.2:
@@ -328,6 +365,21 @@ class EffectEngine:
         # One decision for everything visible: the scheduled beat (locked) or
         # the qualifying kick (unlocked reactive fallback).
         vis_strength, vis_bass, grid_locked = self._visible_event(frame, beatgrid)
+        # The highlight decision: rank this beat's accent against the recent
+        # passage. Selective modes only *fire* on highlights — everything else
+        # ticks quietly or stays dark — which is what makes the hits read as
+        # choreography instead of a metronome. ``beat_now`` marks the frame the
+        # beat actually starts (detection frames that merely enlarge a pulse
+        # must not re-append to the ranking window or re-jump the colour).
+        acc_now = 0.0
+        highlight = False
+        beat_now = False
+        if vis_strength > 0.0:
+            acc_now = max(0.0, min(1.0, (vis_strength - 1.0) / 2.0))
+            beat_now = (not grid_locked) or (
+                beatgrid is not None and beatgrid.predicted_beat
+            )
+            highlight = self._beat_highlight(p, acc_now, append=beat_now)
         # Mid (guitar/snare) onsets from their own dedicated detector stream.
         # They only ever reach the mid-role lights, so they read as "that light
         # is the guitar". When the grid is locked they're quantised to the
@@ -339,25 +391,35 @@ class EffectEngine:
             ph = beatgrid.phase % 0.5
             if min(ph, 0.5 - ph) > _EIGHTH_PHASE:
                 mid_strength = 0.0
-        # Advance the palette position. With a locked grid the per-beat step is
-        # spread *continuously across each beat* — a fluid, tempo-locked colour
-        # roll (the Hue+Spotify look) — with only a smaller bump left on the
-        # accent itself. Without a grid, colour steps discretely on the beat.
+        # Advance the palette position. Highlight-stepping modes (colour_jump)
+        # HOLD the colour layout between highlights and re-deal it on each one,
+        # so colour changes read as musical events (the apartment-sync look),
+        # with only a whisper of tempo-locked roll underneath. Legacy modes
+        # keep the fluid continuous roll (the Hue+Spotify look).
         self.colour_phase += p.colour_speed * dt
         sect = 0.6 + 0.4 * self.section_level
-        adv = beat_colour_advance(p, vis_strength, vis_bass) * sect
-        if (
+        rolling = (
             beatgrid is not None
             and beatgrid.locked
             and beatgrid.period_s > 0.05
             and p.colour_beat_step > 0.0
-        ):
-            self.colour_phase += (
-                p.colour_beat_step * 0.7 * (dt / beatgrid.period_s) * sect
-            )
-            self.colour_phase += adv * 0.35
+        )
+        if p.colour_jump > 0.0:
+            if highlight and beat_now:
+                self.colour_phase += p.colour_jump * (0.6 + 0.4 * acc_now) * sect
+            if rolling:
+                self.colour_phase += (
+                    p.colour_beat_step * 0.25 * (dt / beatgrid.period_s) * sect
+                )
         else:
-            self.colour_phase += adv
+            adv = beat_colour_advance(p, vis_strength, vis_bass) * sect
+            if rolling:
+                self.colour_phase += (
+                    p.colour_beat_step * 0.7 * (dt / beatgrid.period_s) * sect
+                )
+                self.colour_phase += adv * 0.35
+            else:
+                self.colour_phase += adv
 
         # Spatial beat wavefronts (predictive when a beat grid is supplied).
         if p.wave_gain > 0.0:
@@ -370,28 +432,37 @@ class EffectEngine:
         # pop on guitar hits. In the wavefront-led classic modes the synchronous
         # snap is scaled down (the wave carries the beat); hard-snap modes slam
         # on top of the wave — that is the point of them. Grid-locked pulses
-        # are shaped by accent + bar position (every beat fires, sized
-        # musically); the binary accent knee only survives in the unlocked
-        # reactive fallback where there is no schedule to trust.
+        # are shaped by accent + bar position + the highlight ranking
+        # (highlights slam, ordinary beats tick at weak_pulse or stay dark);
+        # the binary accent knee only survives in the unlocked reactive
+        # fallback where there is no schedule to rank against.
         flash_scale = 1.0 if p.hard_snap else max(0.0, 1.0 - p.wave_gain)
         if grid_locked and beatgrid is not None:
             kick = 0.0
             if vis_strength > 0.0:
-                acc = max(0.0, min(1.0, (vis_strength - 1.0) / 2.0))
                 kick = (
-                    beat_pulse(p, acc, beatgrid.beat_in_bar, vis_bass)
+                    beat_pulse(p, acc_now, beatgrid.beat_in_bar, vis_bass, highlight)
                     * flash_scale
                     * beatgrid.schedule_strength
                 )
         else:
             kick = kick_flash(p, vis_strength, vis_bass) * flash_scale
         midf = mid_flash(p, mid_strength)
+        # The full-room moment: the passage's very biggest hits take EVERY
+        # light at once (vocal lights a touch softer), the way the reference
+        # shows punctuate a chorus. Ordinary highlights stay role-separated.
+        full_room = kick > 0.0 and highlight and acc_now >= p.full_room_accent
         lf = self._light_flash
         for cid in lf:
             lf[cid] *= _FLASH_DECAY
         if kick > 0.0 or midf > 0.0:
             for cid, role in self.roles.items():
-                if role == ROLE_MID:
+                if full_room:
+                    f = kick * (0.85 if role == ROLE_VOCAL else 1.0)
+                    if role == ROLE_MID:
+                        f = max(f, midf)
+                    lf[cid] = max(lf.get(cid, 0.0), f)
+                elif role == ROLE_MID:
                     if midf > 0.0:
                         lf[cid] = max(lf.get(cid, 0.0), midf)
                 elif kick > 0.0 and role == ROLE_BASS:

@@ -7,16 +7,29 @@ musically (every few bars, and on drops) so the show keeps surprising. A light
 "is" the bass: it rides the bass envelope and snaps on kicks; the next light
 "is" the guitar and pops on mid onsets; a third shimmers dimly with the vocal.
 
-The ladder:
+The second trick is **highlight selection** (the apartment-sync reference look):
+not every beat fires. The engine ranks each beat's accent against the recent
+passage and only the top slice — the beats a *listener* would pick out — earns a
+hit; ordinary beats just tick (or stay dark in Extreme). Colour follows the same
+philosophy: each lamp holds its own distinct hue and the whole layout re-deals
+on highlights, so colour changes read as events rather than a continuous wash.
 
-* **Subtle** — no dimming at all; colour shifting only.
-* **Medium** — the classic club look (visible dimming, wavefront per beat).
-* **High** — Intense plus a vocal role: bass + guitar lights at full aggression
-  with shimmering dim lights carrying the singing.
-* **Intense** — *unrestrained*: bass and guitar roles only, hard snaps, the
-  eye-safety limiter is bypassed (explicit user choice, see safety docs).
-* **Extreme** — *unrestrained*: every light is bass, only the big kicks count,
-  and everything moves fast in a dark room.
+The ladder (every rung follows the same pattern — roles spread across the room,
+distinct per-lamp colours stepping on highlights, only standout beats firing —
+each rung just pushes it harder and gets choosier):
+
+* **Subtle** — no dimming at all; colour only, stepping on the highlights.
+* **Medium** — gentle: a soft bass/guitar split, small pops on highlights, a
+  soft wavefront, ordinary beats just tick.
+* **High** — the full band (bass + guitar + vocal shimmer) at moderate
+  selectivity; hard snaps on the beats that matter.
+* **Intense** — *unrestrained*: bass and guitar split the room 2:1, hard snaps,
+  clearly selective — the eye-safety limiter is bypassed (explicit user
+  choice, see safety docs).
+* **Extreme** — *unrestrained* maximum and the choosiest: only the top quarter
+  of beats fire (plus every bar's downbeat), each one slams its role group to
+  full from a near-dark base, the passage's very biggest hits take the whole
+  room at once, and every highlight re-deals the colour layout.
 """
 
 from __future__ import annotations
@@ -70,32 +83,46 @@ class ModeParams:
     accent_floor: float = 0.0   # accents below this barely register (selectivity)
     weak_pulse: float = 0.30    # fraction of beat_gain a zero-accent beat still gets
     downbeat_pulse: float = 0.0  # minimum pulse weight on bar downbeats
+    # --- highlight selection (the apartment-sync look) ------------------------
+    # A beat is a *highlight* when its accent ranks in the top (1-q) of the
+    # recent beats (rolling window in the engine): selectivity that adapts to
+    # the passage, where a fixed accent threshold goes blind (a flat passage
+    # all-fires or all-skips). 0 disables ranking — every scheduled beat is a
+    # highlight, the pre-highlight behaviour.
+    highlight_quantile: float = 0.0
+    colour_jump: float = 0.0   # palette re-deal per highlight (colour as an event)
+    colour_distribute: float = 0.0  # 0 = spatial gradient, 1 = distinct hue per lamp
+    full_room_accent: float = 2.0  # accent at/above which ALL roles slam (2 = never)
 
 
 MODE_PARAMS: dict[SyncMode, ModeParams] = {
     # Seamless: NO dimming whatsoever (base == floor) — the lights hold a steady
-    # bright level and only the colour moves: a continuous drift plus a step on
-    # each beat so the hues still groove with the song. The calmest preset.
+    # bright level and only the colour moves: a slow drift plus a small re-deal
+    # on each highlight, so the hues groove with the song's standout moments.
     SyncMode.SUBTLE: ModeParams(
         base=0.80, floor=0.80, bass_gain=0.0, beat_gain=0.0, beat_threshold=99.0,
         spread=0.0, colour_speed=0.04, shimmer=0.0, colour_sat=1.0,
         colour_beat_step=0.008, colour_lerp=0.08, bri_attack=0.12, bri_decay=0.08,
+        highlight_quantile=0.50, colour_jump=0.03, colour_distribute=0.30,
     ),
-    # The classic club look (what Intense used to be): dim baseline with visible
-    # dimming between beats, a strong wavefront per kick, soft desaturated album
-    # colours stepping on the beat. Every light rides the bass together.
+    # Gentle club: a soft bass/guitar split, visible dimming, a soft wavefront
+    # on the highlights while ordinary beats just tick, desaturated album
+    # colours stepping on the standout hits.
     SyncMode.MEDIUM: ModeParams(
         base=0.12, floor=0.06, bass_gain=0.16, beat_gain=0.9, beat_threshold=1.4,
         spread=0.10, colour_speed=0.05, shimmer=0.15, colour_sat=0.6,
         colour_beat_step=0.030, colour_lerp=0.30,
         wave_gain=0.85, wave_speed=2.2, wave_width=0.30, height_freq=0.45,
         depth_wash=0.10, anticipation_ms=80, drop_boost=0.50, build_desat=0.50,
-        weak_pulse=0.25,
+        role_mix=(0.7, 0.3, 0.0), mid_gain=0.5, mid_threshold=1.45,
+        role_rotate_beats=16,
+        highlight_quantile=0.30, weak_pulse=0.20, downbeat_pulse=0.35,
+        colour_jump=0.035, colour_distribute=0.40, full_room_accent=0.97,
     ),
     # The band on your lights: bass lights snap on kicks, guitar lights pop on
     # mid onsets, and vocal lights shimmer dimly with the singing — assignments
-    # rotate every 4 bars. Full Intense aggression underneath, but the vocal
-    # role keeps a quiet, human layer in the room.
+    # rotate every 4 bars. Moderately selective: highlights snap hard, ordinary
+    # beats tick softly, and the vocal role keeps a quiet, human layer.
     SyncMode.HIGH: ModeParams(
         base=0.10, floor=0.04, bass_gain=0.55, beat_gain=1.0, beat_threshold=1.15,
         spread=0.0, colour_speed=0.06, shimmer=0.55, colour_sat=0.75,
@@ -104,13 +131,14 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
         anticipation_ms=80, drop_boost=0.60, build_desat=0.45,
         role_mix=(0.4, 0.3, 0.3), mid_gain=0.85, mid_threshold=1.3,
         vocal_dim=0.07, role_rotate_beats=16, hard_snap=True,
+        highlight_quantile=0.45, weak_pulse=0.18, downbeat_pulse=0.45,
+        colour_jump=0.05, colour_distribute=0.60, full_room_accent=0.94,
     ),
     # UNRESTRAINED (the eye-safety limiter is bypassed for this mode — explicit
     # user choice, see effects/safety.py): bass and guitar split the room 2:1,
-    # both snapping hard to full; kicks land at a low threshold and mid onsets
-    # (guitar/snare) hit their own lights even off the grid. Roles rotate every
-    # 4 bars. A lit, fluid base with wide soft wavefronts underneath — the
-    # snaps are the percussion, the rest of the room keeps flowing.
+    # both snapping hard to full; clearly selective — highlights slam, ordinary
+    # beats only tick — and the passage's biggest hits take the whole room.
+    # Roles rotate every 4 bars; each highlight re-deals the colour layout.
     SyncMode.INTENSE: ModeParams(
         base=0.14, floor=0.06, bass_gain=0.60, beat_gain=1.2, beat_threshold=1.1,
         spread=0.0, colour_speed=0.07, shimmer=0.0, colour_sat=0.9,
@@ -118,24 +146,27 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
         wave_gain=1.1, wave_speed=2.6, wave_width=0.34,
         anticipation_ms=90, drop_boost=0.80, build_desat=0.55,
         role_mix=(0.67, 0.33, 0.0), mid_gain=1.0, mid_threshold=1.15,
-        role_rotate_beats=16, hard_snap=True, weak_pulse=0.35,
+        role_rotate_beats=16, hard_snap=True,
+        highlight_quantile=0.60, weak_pulse=0.15, downbeat_pulse=0.55,
+        colour_jump=0.07, colour_distribute=0.80, full_room_accent=0.92,
     ),
-    # UNRESTRAINED maximum: a dark room where every light is bass and only the
-    # BIG kicks count (high threshold) — each one slams every lamp toward full
-    # and launches a fast wavefront, with hard fast colour jumps. Roles don't
-    # split (the kick owns the room); rotation still reseeds the colour layout
-    # every 2 bars so it never settles.
+    # UNRESTRAINED maximum — the apartment-sync reference at full force: a
+    # near-dark room split into the full band (bass / guitar / vocal shimmer,
+    # rotating every 2 bars), where ONLY the top quarter of beats fire — each
+    # slams its role group to full and launches a fast wavefront, the bar's
+    # downbeat always lands, the passage's very biggest hits take every light
+    # at once, and each highlight hard re-deals the per-lamp colour layout.
     SyncMode.EXTREME: ModeParams(
-        base=0.0, floor=0.0, bass_gain=0.10, beat_gain=1.5, beat_threshold=1.7,
-        spread=0.0, colour_speed=0.15, shimmer=0.30, colour_sat=0.92,
-        colour_beat_step=0.085, colour_lerp=0.60, bri_attack=1.0, bri_decay=0.55,
+        base=0.06, floor=0.02, bass_gain=0.30, beat_gain=1.5, beat_threshold=1.7,
+        spread=0.0, colour_speed=0.10, shimmer=0.35, colour_sat=0.92,
+        colour_beat_step=0.05, colour_lerp=0.60, bri_attack=1.0, bri_decay=0.55,
         wave_gain=1.6, wave_speed=3.6, wave_width=0.22,
         anticipation_ms=90, drop_boost=1.0, build_desat=0.60,
-        role_mix=(1.0, 0.0, 0.0), role_rotate_beats=8, hard_snap=True,
-        # Selective by musical rank, not by a fragile absolute threshold:
-        # ordinary beats stay dark, top-quartile accents slam, and the bar's
-        # downbeat always lands so the room never loses the pulse.
-        accent_floor=0.70, weak_pulse=0.0, downbeat_pulse=0.85,
+        role_mix=(0.5, 0.3, 0.2), mid_gain=1.3, mid_threshold=1.6,
+        vocal_dim=0.04, role_rotate_beats=8, hard_snap=True,
+        accent_floor=0.50, weak_pulse=0.0, downbeat_pulse=0.85,
+        highlight_quantile=0.75, colour_jump=0.13, colour_distribute=1.0,
+        full_room_accent=0.88,
     ),
 }
 
@@ -228,27 +259,48 @@ def beat_colour_advance(params: ModeParams, strength: float, bass: float) -> flo
 _BAR_W = (1.0, 0.72, 0.86, 0.72)
 
 
-def pulse_weight(p: ModeParams, accent: float, beat_in_bar: int) -> float:
+# A ranked highlight never lands limp: selective modes pulse it at least this
+# hard even when the passage is quiet and its absolute accent is small.
+_HL_MIN = 0.55
+
+
+def pulse_weight(
+    p: ModeParams, accent: float, beat_in_bar: int, highlight: bool = True
+) -> float:
     """0..1 size of a scheduled beat pulse from its accent and bar position.
 
-    Every locked beat gets at least ``weak_pulse`` (the show never skips the
-    pulse — missed beats are what reads as "random"), accents scale the rest,
-    ``accent_floor`` makes selective modes ignore ordinary beats, and
-    ``downbeat_pulse`` guarantees the bar's "one" still lands in those modes.
+    ``highlight`` is the engine's rank-based selection (top accents of the
+    recent passage): highlights pulse at full musical size — selective modes
+    guarantee at least ``_HL_MIN`` so a ranked beat never lands limp — while
+    non-highlights get only ``weak_pulse``, the quiet metronome between hits
+    (zero in Extreme: ordinary beats stay dark). ``accent_floor`` shapes the
+    response *within* highlights, and ``downbeat_pulse`` guarantees the bar's
+    "one" still lands either way, so the room never loses the pulse.
     """
-    a = (accent - p.accent_floor) / max(1e-6, 1.0 - p.accent_floor)
-    a = max(0.0, min(1.0, a))
-    w = p.weak_pulse + (1.0 - p.weak_pulse) * a
+    if highlight:
+        a = (accent - p.accent_floor) / max(1e-6, 1.0 - p.accent_floor)
+        a = max(0.0, min(1.0, a))
+        if p.highlight_quantile > 0.0:
+            a = max(a, _HL_MIN)
+        w = p.weak_pulse + (1.0 - p.weak_pulse) * a
+    else:
+        w = p.weak_pulse
     if beat_in_bar == 0:
         w = max(w, p.downbeat_pulse)
     return w * _BAR_W[beat_in_bar % 4]
 
 
-def beat_pulse(p: ModeParams, accent: float, beat_in_bar: int, bass: float) -> float:
+def beat_pulse(
+    p: ModeParams, accent: float, beat_in_bar: int, bass: float, highlight: bool = True
+) -> float:
     """Snap a bass-role light gets from a *scheduled* (grid-locked) beat."""
     if p.beat_gain <= 0.0:
         return 0.0
-    return p.beat_gain * pulse_weight(p, accent, beat_in_bar) * (0.6 + 0.4 * bass)
+    return (
+        p.beat_gain
+        * pulse_weight(p, accent, beat_in_bar, highlight)
+        * (0.6 + 0.4 * bass)
+    )
 
 
 def accent_knee(strength: float, threshold: float) -> float:
@@ -365,8 +417,15 @@ def render(engine, frame) -> dict[int, tuple[RGB, float]]:
         bri = p.floor if bri < p.floor else 1.0 if bri > 1.0 else bri
         # Palette position = this light's spatial rank (compressed in quiet
         # sections) + the engine's accumulated colour phase (time drift +
-        # per-beat steps), so colour moves to the beat.
-        colour = engine.palette.sample(info["xrank"] * span + rot + engine.colour_phase)
+        # highlight steps), so colour moves with the music. colour_distribute
+        # morphs the spatial gradient toward golden-ratio spacing by rank —
+        # every lamp its own distinct hue (the apartment-sync look) instead of
+        # near-neighbours on a smooth gradient.
+        cpos = info["xrank"] * span
+        if p.colour_distribute > 0.0:
+            distinct = (info["rank"] * 0.381966) % 1.0
+            cpos += p.colour_distribute * (distinct - cpos)
+        colour = engine.palette.sample(cpos + rot + engine.colour_phase)
         # Theme-faithful value: a dark palette swatch (dark silver, deep purple)
         # renders as dimmer light, so moody album art gives a moody show. The
         # engine's chroma pipeline renormalises colour, so the value must be
