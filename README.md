@@ -119,27 +119,26 @@ Each area becomes a device with a **switch** plus the controls below.
 | Brightness | Master brightness ceiling, 5-100% |
 | Timing offset | Fine trim, -500..+500 ms (alignment is otherwise automatic) |
 
-**Intensity** sets how the lights move relative to the brightness ceiling.
-Every rung follows the same pattern - instrument roles spread across the room,
-distinct per-lamp colours that re-deal on the highlights, and only the beats
-that stand out in their passage firing - each rung just pushes it harder and
-gets choosier:
+**Intensity** sets how the lights move relative to the brightness ceiling. The
+high modes match the apartment-sync look: the whole room holds one colour and
+jumps to a new one on every beat (colour is the motion), brightness slams bright
+only on the beats that stand out in their passage and falls back to dark
+between, and the base is a true dark room lit by the song's own energy.
 
-- **Subtle** - no dimming at all; the colour drifts and steps on the
-  highlights.
-- **Medium** - gentle club: a soft bass/guitar split, small pops and a soft
-  wavefront on the highlights, ordinary beats just tick.
+- **Subtle** - no dimming at all; one gentle gradient, the colour drifts and
+  steps softly on the beat.
+- **Medium** - gentle club: visible dimming, soft flashes on the stronger
+  beats, album colours stepping each beat across a wide spread.
 - **High** - the band on your lights: bass lights snap on kicks, guitar lights
   pop on mid hits, vocal lights shimmer dimly with the singing; roles rotate
-  every few bars. Flash-limited.
-- **Intense** - *unrestrained*: bass and guitar split the room 2:1 and snap
-  hard to full on the highlights; the passage's biggest hits take the whole
-  room.
-- **Extreme** - *unrestrained* maximum and the choosiest: a near-dark room
-  split into the full band, where only the top quarter of beats fire (the
-  bar's downbeat always lands) - each hit slams its role group to full and
-  launches a fast wavefront, the very biggest hits take every light at once,
-  and each highlight hard re-deals the per-lamp colour layout.
+  every few bars. The one mode that keeps a per-instrument spatial split.
+  Flash-limited.
+- **Intense** - *unrestrained*: the reference look at medium force - a nearly
+  unified room jumping colour every beat, selective bright flashes, dark
+  between.
+- **Extreme** - *unrestrained* maximum: the reference at full force - a pure
+  dark room, one unified hue jumping across the spectrum every beat, hard
+  flashes only on the standout beats, black between.
 
 **Effect** swaps the renderer: **Music** (default), **Movies** (calm
 soundtrack-following backlight) or **Fireworks**. **Colour** picks the palette

@@ -103,10 +103,10 @@ class SyncMode(StrEnum):
     """
 
     SUBTLE = "subtle"  # seamless: steady level, colour just flows/shifts smoothly
-    MEDIUM = "medium"  # gentle: stays bright, sways softly with the music
-    HIGH = "high"  # dims to ~30%, the kick sweeps the room as a wavefront
-    INTENSE = "intense"  # full 0-100% dimming/brightening + shimmer
-    EXTREME = "extreme"  # club: near-dark, only standout beats slam, fast waves
+    MEDIUM = "medium"  # gentle club: visible dimming, soft flashes on strong beats
+    HIGH = "high"  # the band: per-instrument spatial split, kicks/guitar/vocals
+    INTENSE = "intense"  # unified room jumping colour every beat, selective flashes
+    EXTREME = "extreme"  # dark room, one hue jumping the spectrum, standout-beat slams
 
 
 class SyncEffect(StrEnum):

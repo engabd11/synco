@@ -119,7 +119,7 @@ def test_pulse_weight_non_highlights_still_tick_in_intense():
 def test_extreme_is_selective_but_downbeat_always_lands():
     p = MODE_PARAMS[SyncMode.EXTREME]
     assert pulse_weight(p, 0.3, 1, highlight=False) == 0.0  # ordinary beat: dark
-    assert pulse_weight(p, 0.3, 0, highlight=False) >= 0.8  # the "one" still lands
+    assert pulse_weight(p, 0.3, 0, highlight=False) >= 0.55  # the "one" still lands
     assert pulse_weight(p, 0.95, 2, highlight=True) > 0.5  # top accents slam anywhere
 
 
@@ -279,7 +279,7 @@ def test_slow_vowel_swell_does_not_pop_mid_lights():
 
 def test_locked_mid_pops_quantise_to_eighth_grid():
     eng = EffectEngine(_channels(3))
-    eng.set_mode(SyncMode.INTENSE)  # has a mid role
+    eng.set_mode(SyncMode.HIGH)  # the mode that keeps the per-instrument split
     for _ in range(5):
         eng.render(_quiet(), _DT, beatgrid=_grid(False, phase=0.4))
     roles = dict(eng.roles)

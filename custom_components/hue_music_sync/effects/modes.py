@@ -7,29 +7,35 @@ musically (every few bars, and on drops) so the show keeps surprising. A light
 "is" the bass: it rides the bass envelope and snaps on kicks; the next light
 "is" the guitar and pops on mid onsets; a third shimmers dimly with the vocal.
 
-The second trick is **highlight selection** (the apartment-sync reference look):
-not every beat fires. The engine ranks each beat's accent against the recent
-passage and only the top slice — the beats a *listener* would pick out — earns a
-hit; ordinary beats just tick (or stay dark in Extreme). Colour follows the same
-philosophy: each lamp holds its own distinct hue and the whole layout re-deals
-on highlights, so colour changes read as events rather than a continuous wash.
+The signature look (measured frame-by-frame from the apartment-sync reference
+recording) has three parts the high modes deliver together:
 
-The ladder (every rung follows the same pattern — roles spread across the room,
-distinct per-lamp colours stepping on highlights, only standout beats firing —
-each rung just pushes it harder and gets choosier):
+* **Colour is the show.** The whole room holds ONE unified hue and JUMPS to a
+  new one — a big, spectrum-spanning step — on every beat. Colour, not
+  brightness, is the primary motion; it reads as the beat.
+* **Highlight selection.** Brightness slams bright only on the beats that stand
+  out in their passage (ranked against the recent ~24 beats) and falls back to
+  dark between them — the reference sits fully dark ~37% of the time. A flat
+  four-to-the-floor still hits every beat; a dynamic mix fires only the
+  standouts.
+* **A real dark room.** Base brightness is ~0; the chorus is lit by the song's
+  own energy, the breakdown goes black, and the flashes punch out of it.
 
-* **Subtle** — no dimming at all; colour only, stepping on the highlights.
-* **Medium** — gentle: a soft bass/guitar split, small pops on highlights, a
-  soft wavefront, ordinary beats just tick.
-* **High** — the full band (bass + guitar + vocal shimmer) at moderate
-  selectivity; hard snaps on the beats that matter.
-* **Intense** — *unrestrained*: bass and guitar split the room 2:1, hard snaps,
-  clearly selective — the eye-safety limiter is bypassed (explicit user
-  choice, see safety docs).
-* **Extreme** — *unrestrained* maximum and the choosiest: only the top quarter
-  of beats fire (plus every bar's downbeat), each one slams its role group to
-  full from a near-dark base, the passage's very biggest hits take the whole
-  room at once, and every highlight re-deals the colour layout.
+The ladder — same pattern throughout, each rung harder, darker and more unified:
+
+* **Subtle** — no dimming; one gentle spatial gradient, colour drifts + small
+  per-beat steps. The calm preset.
+* **Medium** — gentle club: visible dimming, soft flashes on the stronger
+  beats, album colours stepping each beat across a wide spatial spread.
+* **High** — the one mode that keeps the per-instrument SPATIAL split: bass
+  lights snap on kicks, guitar lights pop on mid onsets, vocal lights shimmer
+  with the singing; roles rotate every few bars.
+* **Intense** — *unrestrained*: the reference look at medium force — a nearly
+  unified room jumping colour every beat, selective flashes, dark between.
+  The eye-safety limiter is bypassed (explicit user choice, see safety docs).
+* **Extreme** — *unrestrained* maximum: the reference at full force — a pure
+  dark room, one unified hue jumping across the spectrum every beat, hard
+  flashes only on the standout beats, black between.
 """
 
 from __future__ import annotations
@@ -90,83 +96,86 @@ class ModeParams:
     # all-fires or all-skips). 0 disables ranking — every scheduled beat is a
     # highlight, the pre-highlight behaviour.
     highlight_quantile: float = 0.0
-    colour_jump: float = 0.0   # palette re-deal per highlight (colour as an event)
-    colour_distribute: float = 0.0  # 0 = spatial gradient, 1 = distinct hue per lamp
+    # Colour as the PRIMARY motion (the apartment-sync look): the whole room
+    # jumps to a new palette position on every beat (highlights jump further),
+    # so colour reads as the beat. 0 keeps the legacy continuous-roll colour.
+    colour_jump: float = 0.0
+    # Per-lamp hue variation: 1.0 = the lamps span the gradient (a spatial
+    # rainbow); 0.0 = every lamp shows the SAME hue (a unified room that jumps
+    # colour together — what the reference does at high intensity).
+    colour_spread: float = 1.0
     full_room_accent: float = 2.0  # accent at/above which ALL roles slam (2 = never)
 
 
 MODE_PARAMS: dict[SyncMode, ModeParams] = {
     # Seamless: NO dimming whatsoever (base == floor) — the lights hold a steady
-    # bright level and only the colour moves: a slow drift plus a small re-deal
-    # on each highlight, so the hues groove with the song's standout moments.
+    # bright level and only the colour moves: a slow drift plus a small step on
+    # each beat, spread across the lamps as a gentle spatial gradient.
     SyncMode.SUBTLE: ModeParams(
         base=0.80, floor=0.80, bass_gain=0.0, beat_gain=0.0, beat_threshold=99.0,
         spread=0.0, colour_speed=0.04, shimmer=0.0, colour_sat=1.0,
-        colour_beat_step=0.008, colour_lerp=0.08, bri_attack=0.12, bri_decay=0.08,
-        highlight_quantile=0.50, colour_jump=0.03, colour_distribute=0.30,
+        colour_beat_step=0.008, colour_lerp=0.10, bri_attack=0.12, bri_decay=0.08,
+        highlight_quantile=0.0, colour_jump=0.020, colour_spread=1.0,
     ),
-    # Gentle club: a soft bass/guitar split, visible dimming, a soft wavefront
-    # on the highlights while ordinary beats just tick, desaturated album
-    # colours stepping on the standout hits.
+    # Gentle club: visible dimming, soft flashes on the stronger beats, album
+    # colours stepping each beat across a wide spatial spread. The calmest of
+    # the colour-jump modes.
     SyncMode.MEDIUM: ModeParams(
-        base=0.12, floor=0.06, bass_gain=0.16, beat_gain=0.9, beat_threshold=1.4,
-        spread=0.10, colour_speed=0.05, shimmer=0.15, colour_sat=0.6,
-        colour_beat_step=0.030, colour_lerp=0.30,
-        wave_gain=0.85, wave_speed=2.2, wave_width=0.30, height_freq=0.45,
-        depth_wash=0.10, anticipation_ms=80, drop_boost=0.50, build_desat=0.50,
-        role_mix=(0.7, 0.3, 0.0), mid_gain=0.5, mid_threshold=1.45,
-        role_rotate_beats=16,
-        highlight_quantile=0.30, weak_pulse=0.20, downbeat_pulse=0.35,
-        colour_jump=0.035, colour_distribute=0.40, full_room_accent=0.97,
+        base=0.12, floor=0.05, bass_gain=0.14, beat_gain=0.9, beat_threshold=1.4,
+        spread=0.0, colour_speed=0.05, shimmer=0.10, colour_sat=0.7,
+        colour_beat_step=0.0, colour_lerp=0.40, bri_attack=1.0, bri_decay=0.30,
+        wave_gain=0.75, wave_speed=2.2, wave_width=0.30, height_freq=0.30,
+        depth_wash=0.08, anticipation_ms=80, drop_boost=0.50, build_desat=0.50,
+        role_mix=(1.0, 0.0, 0.0),
+        highlight_quantile=0.30, weak_pulse=0.25, downbeat_pulse=0.40,
+        colour_jump=0.045, colour_spread=0.70,
     ),
     # The band on your lights: bass lights snap on kicks, guitar lights pop on
     # mid onsets, and vocal lights shimmer dimly with the singing — assignments
-    # rotate every 4 bars. Moderately selective: highlights snap hard, ordinary
-    # beats tick softly, and the vocal role keeps a quiet, human layer.
+    # rotate every 4 bars. The one mode that keeps the per-instrument SPATIAL
+    # split (others go unified); colour still steps each beat, dimming visible.
     SyncMode.HIGH: ModeParams(
-        base=0.10, floor=0.04, bass_gain=0.55, beat_gain=1.0, beat_threshold=1.15,
-        spread=0.0, colour_speed=0.06, shimmer=0.55, colour_sat=0.75,
-        colour_beat_step=0.030, colour_lerp=0.35, bri_attack=1.0, bri_decay=0.42,
-        wave_gain=0.70, wave_speed=2.4, wave_width=0.30,
+        base=0.07, floor=0.02, bass_gain=0.40, beat_gain=1.1, beat_threshold=1.15,
+        spread=0.0, colour_speed=0.06, shimmer=0.50, colour_sat=0.8,
+        colour_beat_step=0.0, colour_lerp=0.42, bri_attack=1.0, bri_decay=0.40,
+        wave_gain=0.65, wave_speed=2.4, wave_width=0.30,
         anticipation_ms=80, drop_boost=0.60, build_desat=0.45,
-        role_mix=(0.4, 0.3, 0.3), mid_gain=0.85, mid_threshold=1.3,
-        vocal_dim=0.07, role_rotate_beats=16, hard_snap=True,
-        highlight_quantile=0.45, weak_pulse=0.18, downbeat_pulse=0.45,
-        colour_jump=0.05, colour_distribute=0.60, full_room_accent=0.94,
+        role_mix=(0.4, 0.3, 0.3), mid_gain=0.9, mid_threshold=1.3,
+        vocal_dim=0.06, role_rotate_beats=16, hard_snap=True,
+        highlight_quantile=0.40, weak_pulse=0.16, downbeat_pulse=0.45,
+        colour_jump=0.07, colour_spread=0.55, full_room_accent=0.94,
     ),
-    # UNRESTRAINED (the eye-safety limiter is bypassed for this mode — explicit
-    # user choice, see effects/safety.py): bass and guitar split the room 2:1,
-    # both snapping hard to full; clearly selective — highlights slam, ordinary
-    # beats only tick — and the passage's biggest hits take the whole room.
-    # Roles rotate every 4 bars; each highlight re-deals the colour layout.
+    # UNRESTRAINED (the eye-safety limiter is bypassed — explicit user choice,
+    # see effects/safety.py): the apartment-sync look at medium force — a
+    # UNIFIED room (every lamp one hue) that jumps colour on every beat and
+    # snaps bright on the stronger ones, dark between, energy lifting the base
+    # through the chorus. Selective flashes, big colour motion.
     SyncMode.INTENSE: ModeParams(
-        base=0.14, floor=0.06, bass_gain=0.60, beat_gain=1.2, beat_threshold=1.1,
-        spread=0.0, colour_speed=0.07, shimmer=0.0, colour_sat=0.9,
-        colour_beat_step=0.045, colour_lerp=0.40, bri_attack=1.0, bri_decay=0.36,
-        wave_gain=1.1, wave_speed=2.6, wave_width=0.34,
+        base=0.0, floor=0.0, bass_gain=0.12, beat_gain=1.3, beat_threshold=1.1,
+        spread=0.0, colour_speed=0.05, shimmer=0.0, colour_sat=0.92,
+        colour_beat_step=0.0, colour_lerp=0.55, energy_gain=0.18,
+        bri_attack=1.0, bri_decay=0.45,
+        wave_gain=0.85, wave_speed=2.8, wave_width=0.28,
         anticipation_ms=90, drop_boost=0.80, build_desat=0.55,
-        role_mix=(0.67, 0.33, 0.0), mid_gain=1.0, mid_threshold=1.15,
-        role_rotate_beats=16, hard_snap=True,
-        highlight_quantile=0.60, weak_pulse=0.15, downbeat_pulse=0.55,
-        colour_jump=0.07, colour_distribute=0.80, full_room_accent=0.92,
+        role_mix=(1.0, 0.0, 0.0), hard_snap=True,
+        highlight_quantile=0.50, weak_pulse=0.10, downbeat_pulse=0.50,
+        colour_jump=0.11, colour_spread=0.10,
     ),
-    # UNRESTRAINED maximum — the apartment-sync reference at full force: a
-    # near-dark room split into the full band (bass / guitar / vocal shimmer,
-    # rotating every 2 bars), where ONLY the top quarter of beats fire — each
-    # slams its role group to full and launches a fast wavefront, the bar's
-    # downbeat always lands, the passage's very biggest hits take every light
-    # at once, and each highlight hard re-deals the per-lamp colour layout.
+    # UNRESTRAINED maximum — the apartment-sync reference at full force (matched
+    # to the recording: ~37% fully dark, one unified hue jumping across the
+    # spectrum on every beat, hard flashes only on the standout beats). Pure
+    # dark room: base 0, the colour IS the show, brightness slams on highlights
+    # and falls back to black, energy keeps the chorus alive.
     SyncMode.EXTREME: ModeParams(
-        base=0.06, floor=0.02, bass_gain=0.30, beat_gain=1.5, beat_threshold=1.7,
-        spread=0.0, colour_speed=0.10, shimmer=0.35, colour_sat=0.92,
-        colour_beat_step=0.05, colour_lerp=0.60, bri_attack=1.0, bri_decay=0.55,
-        wave_gain=1.6, wave_speed=3.6, wave_width=0.22,
+        base=0.0, floor=0.0, bass_gain=0.05, beat_gain=1.6, beat_threshold=1.5,
+        spread=0.0, colour_speed=0.06, shimmer=0.0, colour_sat=0.98,
+        colour_beat_step=0.0, colour_lerp=0.70, energy_gain=0.13,
+        bri_attack=1.0, bri_decay=0.55,
+        wave_gain=0.70, wave_speed=3.4, wave_width=0.24,
         anticipation_ms=90, drop_boost=1.0, build_desat=0.60,
-        role_mix=(0.5, 0.3, 0.2), mid_gain=1.3, mid_threshold=1.6,
-        vocal_dim=0.04, role_rotate_beats=8, hard_snap=True,
-        accent_floor=0.50, weak_pulse=0.0, downbeat_pulse=0.85,
-        highlight_quantile=0.75, colour_jump=0.13, colour_distribute=1.0,
-        full_room_accent=0.88,
+        role_mix=(1.0, 0.0, 0.0), hard_snap=True,
+        accent_floor=0.45, weak_pulse=0.0, downbeat_pulse=0.60,
+        highlight_quantile=0.62, colour_jump=0.17, colour_spread=0.0,
     ),
 }
 
@@ -421,10 +430,7 @@ def render(engine, frame) -> dict[int, tuple[RGB, float]]:
         # morphs the spatial gradient toward golden-ratio spacing by rank —
         # every lamp its own distinct hue (the apartment-sync look) instead of
         # near-neighbours on a smooth gradient.
-        cpos = info["xrank"] * span
-        if p.colour_distribute > 0.0:
-            distinct = (info["rank"] * 0.381966) % 1.0
-            cpos += p.colour_distribute * (distinct - cpos)
+        cpos = info["xrank"] * span * p.colour_spread
         colour = engine.palette.sample(cpos + rot + engine.colour_phase)
         # Theme-faithful value: a dark palette swatch (dark silver, deep purple)
         # renders as dimmer light, so moody album art gives a moody show. The

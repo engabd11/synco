@@ -100,7 +100,6 @@ class EffectEngine:
             nx, ny, nz = positions[ch.channel_id]
             self.cmap[ch.channel_id] = {
                 "norm_x": (ch.x + 1.0) / 2.0,
-                "rank": rank,
                 "xrank": rank / max(1, n - 1),
                 "band": band_for_rank(rank, n),
                 "nx": nx,
@@ -391,11 +390,12 @@ class EffectEngine:
             ph = beatgrid.phase % 0.5
             if min(ph, 0.5 - ph) > _EIGHTH_PHASE:
                 mid_strength = 0.0
-        # Advance the palette position. Highlight-stepping modes (colour_jump)
-        # HOLD the colour layout between highlights and re-deal it on each one,
-        # so colour changes read as musical events (the apartment-sync look),
-        # with only a whisper of tempo-locked roll underneath. Legacy modes
-        # keep the fluid continuous roll (the Hue+Spotify look).
+        # Advance the palette position. Colour-jump modes make colour the
+        # PRIMARY motion (the apartment-sync look): the whole room snaps to a
+        # new palette position on EVERY beat — a big spectrum-spanning jump —
+        # with highlights jumping further still, so the colour reads as the
+        # beat. Between beats it holds (only a slow drift). Legacy modes keep
+        # the fluid continuous roll (the Hue+Spotify look).
         self.colour_phase += p.colour_speed * dt
         sect = 0.6 + 0.4 * self.section_level
         rolling = (
@@ -405,11 +405,16 @@ class EffectEngine:
             and p.colour_beat_step > 0.0
         )
         if p.colour_jump > 0.0:
-            if highlight and beat_now:
-                self.colour_phase += p.colour_jump * (0.6 + 0.4 * acc_now) * sect
-            if rolling:
+            if beat_now:
+                # Every beat jumps; highlights jump ~1.7x so the standout hits
+                # land the biggest hue change.
+                step = p.colour_jump * (0.55 + 0.45 * acc_now)
+                if highlight:
+                    step *= 1.7
+                self.colour_phase += step * sect
+            if rolling:  # a whisper of tempo-locked roll underneath the jumps
                 self.colour_phase += (
-                    p.colour_beat_step * 0.25 * (dt / beatgrid.period_s) * sect
+                    p.colour_beat_step * 0.2 * (dt / beatgrid.period_s) * sect
                 )
         else:
             adv = beat_colour_advance(p, vis_strength, vis_bass) * sect
