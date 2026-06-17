@@ -199,6 +199,7 @@ class SyncSession:
         self._map_check = 0.0
         self._map_prev_pos: float | None = None
         self._map_section: Section | None = None
+        self._play_track: str | None = None  # last track seen by the rhythm models
         self._fallback_track: str | None = None  # track the metadata source opened on
         self._source: (
             MusicAssistantSource | MetadataSource | SnapcastSource | TrackMapSource | None
@@ -422,6 +423,19 @@ class SyncSession:
                         ):
                             await self._reset_source()
                             continue
+                    # Track change: reset the rhythm/structure models so the
+                    # previous song's locked tempo can't keep firing stale beats
+                    # on the new one (which read as flashes that don't match the
+                    # song). The map state is reset alongside so the new track's
+                    # grid replaces it cleanly once analysed.
+                    tid = self._source.track_id
+                    if tid and tid != self._play_track:
+                        self._play_track = tid
+                        self._tempo.reset()
+                        self._structure.reset()
+                        self._beat_anchor = None
+                        self._map_prev_pos = None
+                        self._map_section = None
                     # Causal beat grid (always running; the fallback rhythm model).
                     beatgrid = self._tempo.update(
                         frame.t_audio, frame.flux, frame.beat, frame.beat_strength,

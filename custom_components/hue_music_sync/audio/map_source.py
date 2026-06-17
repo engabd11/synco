@@ -134,6 +134,11 @@ class TrackMapSource:
         if track != self._track_id:
             self._track_id = track
             self._prev_query = None
+            # Re-anchor the replay clock to the new song immediately (it starts
+            # near 0) so we don't replay the previous track's position into it.
+            reported = self._reported_position()
+            if reported is not None:
+                self._pos = reported
             self._ensure_map()
         pic = attrs.get("entity_picture")
         if pic:

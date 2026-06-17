@@ -13,7 +13,7 @@
 // Cosmetic version (shown in the console banner). The browser cache-bust no
 // longer depends on this: the integration appends ?v=<content-hash> derived from
 // this file's bytes, so any edit is picked up without a manual hard refresh.
-const VERSION = "1.14.1";
+const VERSION = "1.14.2";
 
 /* ------------------------- Palette data ------------------------- */
 // Colour schemes from the integration, each a small gradient swatch.
@@ -949,6 +949,26 @@ class HueMusicSyncCard extends HTMLElement {
 
   /* ------------------------- Render ------------------------- */
   _render() {
+    // A render error must NEVER bubble out of setConfig() - Lovelace turns that
+    // into a dashboard-wide "Configuration error". Contain it, log it, and show
+    // the actual message in-card so it can be diagnosed.
+    try {
+      this._renderImpl();
+    } catch (err) {
+      console.error("hue-music-sync-card: render failed", err);  // eslint-disable-line no-console
+      try {
+        this.shadowRoot.innerHTML =
+          '<div style="padding:16px;font:13px system-ui,sans-serif;color:#ffb4b4;' +
+          'background:#1a0f17;border-radius:12px;">Hue Synco card hit an error: ' +
+          String((err && err.message) || err) +
+          '<br><span style="color:#9aa">Please report this message.</span></div>';
+      } catch (_) {
+        /* shadowRoot not ready; nothing more we can do */
+      }
+    }
+  }
+
+  _renderImpl() {
     if (!this._config) return;
     if (this._cal) return; // don't tear the DOM down mid-calibration
     const m = this._model();
