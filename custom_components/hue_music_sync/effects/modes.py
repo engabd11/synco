@@ -1,11 +1,13 @@
 """Intensity modes as parameters for one unified renderer, with **band roles**.
 
-The signature trick is the per-bulb *instrument split*: each light is assigned a
-role — **bass** (kick), **mid** (guitar/snare) or **vocal** (shimmer on singing
-and high content) — per the mode's ``role_mix``, and the assignments rotate
-musically (every few bars, and on drops) so the show keeps surprising. A light
-"is" the bass: it rides the bass envelope and snaps on kicks; the next light
-"is" the guitar and pops on mid onsets; a third shimmers dimly with the vocal.
+Two layers of instrument reactivity work together. **Named roles** give a few
+lights a dedicated job — **bass** (kick), **mid** (guitar/snare) or **vocal**
+(shimmer on singing) per ``role_mix`` — and rotate musically so the show keeps
+surprising. On top of that, **every** light reacts to its own slice of the full
+melbank spectrum (``spectral_pop``): it pops on a fresh attack in its frequency
+range, so a kick lights the low lamps, a snare the low-mids, a guitar/lead the
+mids and a cymbal the highs. The room therefore adapts to *all* instruments and
+all kinds of music, not just the three named roles.
 
 The signature look (measured frame-by-frame from the apartment-sync reference
 recording) has three parts the high modes deliver together:
@@ -118,6 +120,9 @@ class ModeParams:
     #                             ramps off the bridge's coarse low-value range)
     colour_flow: float = 0.0    # continuous palette advance per second (loudness-scaled),
     #                             so colour keeps moving between beats too
+    spectral_pop: float = 0.0   # transient pop per lamp from a fresh attack in its
+    #                             melbank slice: reacts to EVERY instrument across the
+    #                             spectrum (kick/snare/guitar/lead/cymbal), not just roles
 
 
 MODE_PARAMS: dict[SyncMode, ModeParams] = {
@@ -142,7 +147,7 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
         role_mix=(1.0, 0.0, 0.0),
         highlight_quantile=0.30, weak_pulse=0.25, downbeat_pulse=0.40,
         colour_jump=0.045, colour_spread=0.70,
-        melbank_gain=0.45, melbank_floor=0.06, colour_flow=0.05,
+        melbank_gain=0.45, melbank_floor=0.06, colour_flow=0.05, spectral_pop=0.35,
     ),
     # The band on your lights: bass lights snap on kicks, guitar lights pop on
     # mid onsets, and vocal lights shimmer dimly with the singing — assignments
@@ -158,7 +163,7 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
         vocal_dim=0.06, role_rotate_beats=16, hard_snap=True,
         highlight_quantile=0.40, weak_pulse=0.16, downbeat_pulse=0.45,
         colour_jump=0.07, colour_spread=0.55, full_room_accent=0.94,
-        melbank_gain=0.50, melbank_floor=0.05, colour_flow=0.05,
+        melbank_gain=0.50, melbank_floor=0.05, colour_flow=0.05, spectral_pop=0.45,
     ),
     # UNRESTRAINED (the eye-safety limiter is bypassed — explicit user choice,
     # see effects/safety.py): the apartment-sync look at medium force — a
@@ -172,11 +177,11 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
         bri_attack=1.0, bri_decay=0.62,
         wave_gain=0.90, wave_speed=3.0, wave_width=0.26,
         anticipation_ms=90, drop_boost=0.90, build_desat=0.55,
-        role_mix=(0.6, 0.4, 0.0), mid_gain=1.1, mid_threshold=1.05,
+        role_mix=(0.45, 0.35, 0.2), mid_gain=1.1, mid_threshold=1.05,
         vocal_dim=0.06, role_rotate_beats=16, hard_snap=True,
         highlight_quantile=0.25, weak_pulse=0.35, downbeat_pulse=0.55,
         colour_jump=0.15, colour_spread=0.12, full_room_accent=0.90,
-        melbank_gain=0.40, melbank_floor=0.0, colour_flow=0.06,
+        melbank_gain=0.40, melbank_floor=0.0, colour_flow=0.06, spectral_pop=0.80,
     ),
     # UNRESTRAINED maximum — the apartment-sync reference at full force (matched
     # to the recording: ~37% fully dark, one unified hue jumping across the
@@ -195,7 +200,7 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
         accent_floor=0.25, weak_pulse=0.30, downbeat_pulse=0.70,
         highlight_quantile=0.30, colour_jump=0.22, colour_spread=0.0,
         full_room_accent=0.80,
-        melbank_gain=0.40, melbank_floor=0.0, colour_flow=0.07,
+        melbank_gain=0.40, melbank_floor=0.0, colour_flow=0.07, spectral_pop=1.0,
     ),
 }
 
@@ -435,6 +440,7 @@ def render(engine, frame) -> dict[int, tuple[RGB, float]]:
     rot = 0.37 * engine.role_offset if p.role_rotate_beats > 0 else 0.0
 
     waves = engine.active_waves
+    tr = engine.mel_transient  # per-bin spectral transients (all-instrument pops)
     out: dict[int, tuple[RGB, float]] = {}
     for ch in engine.channels:
         info = engine.cmap[ch.channel_id]
@@ -456,6 +462,14 @@ def render(engine, frame) -> dict[int, tuple[RGB, float]]:
                 bri += (p.melbank_floor + p.melbank_gain * mel_drive) * music * env_mul
         if p.energy_gain:
             bri += p.energy_gain * frame.energy  # follow overall loudness (movie)
+        if p.spectral_pop and tr:
+            # All-instrument reactivity: pop on a fresh attack anywhere in this
+            # lamp's slice of the spectrum (kick -> low lamps, snare -> low-mids,
+            # guitar/lead -> mids, cymbal/air -> highs). Transient-based, so it
+            # snaps bright on the hit and falls back - the club spectrum strobe.
+            lo, hi = info["mel_lo"], info["mel_hi"]
+            if hi > lo:
+                bri += p.spectral_pop * (sum(tr[lo:hi]) / (hi - lo)) * music
         if p.spread:
             bri += p.spread * env.get(info["band"], 0.0)
         if p.height_freq:

@@ -63,10 +63,13 @@ to the bridge over the Hue Entertainment API (~40 Hz over DTLS), and a bundled
   breakdowns breathe - predictively when the track map knows what is coming.
 - **Effects**: Music (beat/frequency choreography), Movies (calm soundtrack
   backlight with a warm cinematic drift) and Fireworks (bursts on big beats).
-- **Instrument roles per bulb**: in the higher intensities the room becomes the
-  band - one light *is* the bass and snaps on kicks, another pops with the
-  guitar, a third shimmers dimly with the vocal - and the assignments rotate
-  every few bars and on drops.
+- **Reacts to every instrument**: beyond the three named roles (a light *is* the
+  bass and snaps on kicks, another pops with the guitar, a third shimmers with
+  the vocal - rotating every few bars and on drops), **every** lamp also reacts
+  to its own slice of the full melbank spectrum, popping on a fresh attack in
+  its frequency range. A kick lights the low lamps, a snare the low-mids, a
+  guitar/lead the mids, a cymbal the highs - so the room adapts to all kinds of
+  music, not just kick and guitar. Intense and Extreme drive this hardest.
 - **Eye safety where you want it**: Subtle, Medium, High and Movies pass
   through a flash limiter (3 flashes/sec, WCAG), a red guard and gamut
   clamping. Intense and Extreme are explicitly **unrestrained club modes** that

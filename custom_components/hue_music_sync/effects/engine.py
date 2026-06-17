@@ -57,6 +57,12 @@ _FLASH_DECAY = 0.80  # per-frame fade of the beat flash overlay (~5 frames)
 _ENV_RISE = 0.55
 _ENV_FALL = 0.10
 
+# Slow per-bin melbank baseline (the reference the spectral transient rises over):
+# rises gently, falls slowly, so a sustained tone is absorbed into the baseline
+# and only fresh attacks register as a transient pop.
+_MEL_SLOW_RISE = 0.25
+_MEL_SLOW_FALL = 0.06
+
 # When the tempo grid is locked the *schedule* drives the show: every grid
 # beat is an event, and the highlight ranking decides which ones visibly fire.
 # A live-detected onset may still enlarge the scheduled pulse, but only within
@@ -137,6 +143,12 @@ class EffectEngine:
             ch.channel_id: ((0.0, 0.0, 0.0), 0.0) for ch in channels
         }
         self._env: dict[str, float] = {}
+        # Per-bin melbank baseline + transient: the slow EMA tracks each band's
+        # sustained level, and the transient is how far the band has jumped above
+        # it right now. Every lamp pops on transients in *its* slice of the
+        # spectrum, so any instrument in any frequency range drives the lights.
+        self._mel_slow: list[float] = []
+        self._mel_transient: list[float] = []
         self._light_flash: dict[int, float] = {}
         self.roles = {}
         self._role_offset = 0
@@ -152,6 +164,35 @@ class EffectEngine:
             prev = self._env.get(name, 0.0)
             alpha = _ENV_RISE if value > prev else _ENV_FALL
             self._env[name] = prev + (value - prev) * alpha
+
+    @property
+    def mel_transient(self) -> list[float]:
+        """Per-bin melbank transient (rise above the slow baseline, 0..1)."""
+        return self._mel_transient
+
+    def _update_mel_transient(self, frame: AnalysisFrame) -> None:
+        """Track each melbank bin's slow baseline and its transient over it.
+
+        The transient is what makes the room react to *every* instrument: a kick
+        spikes the low bins, a snare the low-mids, a guitar the mids, a cymbal
+        the highs - each lamp then pops on the transient in its own spectral
+        slice. It rides above the slow baseline so a sustained tone fades from
+        the pop (only the attack reads), keeping the club bright<->dark snap.
+        """
+        mel = frame.melbank
+        if not mel:
+            self._mel_transient = []
+            return
+        if len(self._mel_slow) != len(mel):
+            self._mel_slow = list(mel)
+        tr: list[float] = []
+        slow = self._mel_slow
+        for i, v in enumerate(mel):
+            s = slow[i]
+            s += (v - s) * (_MEL_SLOW_RISE if v > s else _MEL_SLOW_FALL)
+            slow[i] = s
+            tr.append(v - s if v > s else 0.0)
+        self._mel_transient = tr
 
     @property
     def role_offset(self) -> int:
@@ -380,6 +421,7 @@ class EffectEngine:
         """
         p = self.active_params
         self._update_env(frame)
+        self._update_mel_transient(frame)
         # Refresh the instrument-role assignments (rotate on schedule + drops).
         self._update_roles(p, frame, beatgrid, structure)
         # One decision for everything visible: the scheduled beat (locked) or
