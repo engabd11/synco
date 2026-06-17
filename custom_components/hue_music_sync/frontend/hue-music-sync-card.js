@@ -13,7 +13,7 @@
 // Cosmetic version (shown in the console banner). The browser cache-bust no
 // longer depends on this: the integration appends ?v=<content-hash> derived from
 // this file's bytes, so any edit is picked up without a manual hard refresh.
-const VERSION = "1.11.2";
+const VERSION = "1.11.3";
 
 /* ------------------------- Palette data ------------------------- */
 // Colour schemes from the integration, each a small gradient swatch.
@@ -112,6 +112,15 @@ function vivify(r, g, b) {
   s = Math.min(1, Math.max(0.6, s * 1.2));
   v = Math.min(1, Math.max(0.78, v));
   return rgbToHex(...hsvToRgb(h, s, v));
+}
+
+// Frequency-spectrum colour for the room map: t=0 is the low end (bass, warm
+// red) and t=1 the high end (treble, cool violet), passing through the whole
+// spectrum. Each lamp reacts to its own slice, so its dot is tinted by where it
+// sits in the spectrum (which is its left-to-right position in the room).
+function spectrumColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  return rgbToHex(...hsvToRgb(8 + t * 272, 0.78, 1));
 }
 
 // Accept colours the integration may publish: ["#rrggbb", ...], ["r,g,b", ...],
@@ -358,10 +367,10 @@ const CARD_CSS = `
     font-size: 9.5px; font-weight: 800; letter-spacing: .14em; color: var(--hue-dim); text-transform: uppercase; }
   .hue-stage-tag-dot { width: 6px; height: 6px; border-radius: 50%; background: #ff4b5c; animation: hue-blink 1.6s ease-in-out infinite; }
   @keyframes hue-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
-  .hue-stage-legend { position: absolute; right: 10px; top: 7px; display: flex; gap: 9px;
+  .hue-stage-legend { position: absolute; right: 10px; top: 7px; display: flex; gap: 6px; align-items: center;
     font-size: 9.5px; font-weight: 700; letter-spacing: .08em; color: var(--hue-faint); text-transform: uppercase; }
-  .hue-stage-legend span { display: inline-flex; align-items: center; gap: 4px; }
-  .hue-stage-legend i { width: 7px; height: 7px; border-radius: 50%; }
+  .hue-stage-legend span { display: inline-flex; align-items: center; }
+  .hue-stage-legend .hue-stage-spectrum { width: 52px; height: 6px; border-radius: 4px; display: inline-block; }
 
   /* -- idle beauty: slow palette lava drift while paused -- */
   .hue-hero-wash.idle { animation: hue-lava 26s ease-in-out infinite alternate; }
@@ -400,10 +409,6 @@ const CARD_CSS = `
     .hue-hero-wash.idle, .hue-seg-anim, .hue-stage-tag-dot { animation: none !important; }
   }
 `;
-
-/* Instrument-role ring colours (bass / mid-guitar / vocal). */
-const ROLE_COLORS = ["#ff5d73", "#4dd2ff", "#ffd166"];
-const ROLE_NAMES = ["bass", "guitar", "vocal"];
 
 /* ------------------------- Visualizer -------------------------
    Ambient bars driven by the *real* audio analysis when the integration's live
@@ -1214,17 +1219,51 @@ class HueMusicSyncCard extends HTMLElement {
       for (const node of Object.values(this._stageDots)) node.remove();
     }
     this._stageDots = {};
-    for (const [cid, pos] of Object.entries(positions)) {
+    // Order the lamps left-to-right by their x position: that is exactly the
+    // engine's spectral rank (left = low frequencies, right = high), so a lamp's
+    // horizontal place on the map is the slice of the spectrum it reacts to.
+    const entries = Object.entries(positions).sort((a, b) => a[1][0] - b[1][0]);
+    const n = entries.length;
+    const zs = entries.map((e) => e[1][2]);
+    const zMin = Math.min(...zs);
+    const zSpan = Math.max(...zs) - zMin;
+    entries.forEach(([cid, pos], i) => {
       const dot = document.createElement("div");
       dot.className = "hue-stage-dot";
-      // Front view: x across the room, z (height) up. Inset so dots never clip.
-      dot.style.left = `${(8 + pos[0] * 84).toFixed(1)}%`;
-      dot.style.top = `${(82 - pos[2] * 56).toFixed(1)}%`;
+      const fx = n > 1 ? i / (n - 1) : 0.5; // spectral position 0..1
+      // Spread evenly across the width so the lamps never clump in a corner.
+      const left = 9 + fx * 82;
+      // Vertical: real height when the lamps differ in height, otherwise a
+      // gentle centred arc so a same-height row still reads as a room.
+      const top = zSpan > 0.05
+        ? 80 - ((pos[2] - zMin) / zSpan) * 52
+        : 50 - Math.sin(fx * Math.PI) * 14;
+      dot.style.left = `${left.toFixed(1)}%`;
+      dot.style.top = `${top.toFixed(1)}%`;
+      dot._fx = fx;
       this._stageDots[cid] = dot;
       stage.appendChild(dot);
-    }
+    });
+    this._buildStageLegend();
     this._stageRoles = "";
     stage.classList.add("live");
+  }
+
+  _buildStageLegend() {
+    // The room map now shows the full audio spectrum the lamps cover, low on the
+    // left to high on the right - so the legend is a Low -> High spectrum bar,
+    // not the three named roles. It adapts to every instrument in the music.
+    const legend = this._stageLegend;
+    if (!legend) return;
+    const bar = document.createElement("i");
+    bar.className = "hue-stage-spectrum";
+    const stops = [0, 0.25, 0.5, 0.75, 1].map((t) => spectrumColor(t));
+    bar.style.background = `linear-gradient(90deg, ${stops.join(", ")})`;
+    const lo = document.createElement("span");
+    lo.textContent = "Low";
+    const hi = document.createElement("span");
+    hi.textContent = "High";
+    legend.replaceChildren(lo, bar, hi);
   }
 
   _applyStageLive(live) {
@@ -1233,8 +1272,9 @@ class HueMusicSyncCard extends HTMLElement {
     const roles = (live && live.roles) || {};
     for (const [cid, dot] of Object.entries(this._stageDots)) {
       const hex = lights[cid];
-      const role = roles[cid];
-      const ring = ROLE_COLORS[role] || "#3a3950";
+      // The ring tints the lamp by its place in the spectrum (its frequency
+      // slice), so the map reads as low -> high across the room.
+      const ring = spectrumColor(dot._fx || 0);
       if (hex) {
         // Glow scales with the lamp's actual brightness (max RGB channel).
         const v = Math.max(
@@ -1248,6 +1288,9 @@ class HueMusicSyncCard extends HTMLElement {
       } else {
         dot.style.boxShadow = `0 0 0 2px ${ring}55`;
       }
+      // Pop the dot when its instrument role rotates (the roles still trade
+      // seats around the room), even though the ring is spectrum-tinted.
+      const role = roles[cid];
       if (dot._role !== role) {
         if (dot._role != null) {
           dot.classList.remove("swap");
@@ -1256,22 +1299,6 @@ class HueMusicSyncCard extends HTMLElement {
         }
         dot._role = role;
       }
-    }
-    // Legend: only the roles actually on stage right now.
-    const present = [...new Set(Object.values(roles))].sort();
-    const sig = present.join(",");
-    if (sig !== this._stageRoles && this._stageLegend) {
-      this._stageRoles = sig;
-      this._stageLegend.replaceChildren(
-        ...present.filter((r) => ROLE_NAMES[r]).map((r) => {
-          const s = document.createElement("span");
-          const i = document.createElement("i");
-          i.style.background = ROLE_COLORS[r];
-          s.appendChild(i);
-          s.appendChild(document.createTextNode(ROLE_NAMES[r]));
-          return s;
-        })
-      );
     }
   }
 
