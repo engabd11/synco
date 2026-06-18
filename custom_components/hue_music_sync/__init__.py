@@ -3,9 +3,20 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 import ssl
 
 import voluptuous as vol
+
+# Some HA hosts (a misconfigured Windows registry, minimal OS images) map ".js"
+# to "text/plain"/"application/octet-stream". Browsers then refuse to *execute*
+# the served card as an ES module ("Expected a JavaScript module script but the
+# server responded with a MIME type of text/plain"), so the custom element never
+# registers and Lovelace shows a generic "Configuration error" — even though the
+# file downloads fine and survives every cache clear. Pin the correct type so the
+# bundled card is always served as an executable module, on any platform.
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/javascript", ".mjs")
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID
