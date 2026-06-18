@@ -32,10 +32,12 @@ The ladder — same pattern throughout, each rung harder, darker and more unifie
 * **High** — the one mode that keeps the per-instrument SPATIAL split: bass
   lights snap on kicks, guitar lights pop on mid onsets, vocal lights shimmer
   with the singing; roles rotate every few bars.
-* **Intense** — *unrestrained* club: the WHOLE room reacts together (no
-  instrument split). Brightness follows the song's energy and every beat bursts
-  all the lamps bright then falls back, colour jumping each beat. A big step up
-  from High in pulse and range. Eye-safety limiter bypassed (see safety docs).
+* **Intense** — *unrestrained* but **atmospheric**: a unified room that breathes
+  with the song's energy and grooves on the beat with slower, smoother motion
+  than Extreme (longer flash glow, gentler colour drift, a soft spatial
+  gradient, slow fade), so it suits downtempo / ambient-leaning albums while
+  keeping the rhythm. Only the standout beats slam; ordinary beats pulse softly.
+  Eye-safety limiter bypassed (see safety docs).
 * **Extreme** — *unrestrained* maximum club: the whole room rides the energy
   from near-black in the quiet parts to full brightness in the loud ones, every
   beat detonates all the lamps like a firework and snaps back fastest (widest
@@ -156,36 +158,46 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
     # The band on your lights: bass lights snap on kicks, guitar lights pop on
     # mid onsets, and vocal lights shimmer dimly with the singing — assignments
     # rotate every 4 bars. The one mode that keeps the per-instrument SPATIAL
-    # split (others go unified); colour still steps each beat, dimming visible.
+    # split (others go unified). Tuned to breathe: a stronger continuous melbank /
+    # energy layer, gentler fade and longer flash glow so atmospheric, groove-led
+    # albums (Lumin Rain and the like) flow while the beat still clearly lands —
+    # the everyday mode that fits most music.
     SyncMode.HIGH: ModeParams(
-        base=0.04, floor=0.03, bass_gain=0.28, beat_gain=1.6, beat_threshold=1.1,
+        base=0.06, floor=0.035, bass_gain=0.30, beat_gain=1.6, beat_threshold=1.1,
         spread=0.0, colour_speed=0.06, shimmer=0.50, colour_sat=0.8,
-        colour_beat_step=0.0, colour_lerp=0.45, bri_attack=1.0, bri_decay=0.46,
-        wave_gain=0.55, wave_speed=2.4, wave_width=0.30,
+        colour_beat_step=0.0, colour_lerp=0.38, bri_attack=1.0, bri_decay=0.38,
+        wave_gain=0.55, wave_speed=2.2, wave_width=0.32,
         anticipation_ms=80, drop_boost=0.60, build_desat=0.45,
         role_mix=(0.4, 0.3, 0.3), mid_gain=1.0, mid_threshold=1.25,
-        vocal_dim=0.05, role_rotate_beats=16, hard_snap=True, flash_decay=0.70,
+        vocal_dim=0.05, role_rotate_beats=16, hard_snap=True, flash_decay=0.78,
         highlight_quantile=0.40, weak_pulse=0.16, downbeat_pulse=0.45,
-        colour_jump=0.10, colour_spread=0.55, full_room_accent=0.94,
-        energy_gain=0.12,
-        melbank_gain=0.38, melbank_floor=0.03, colour_flow=0.035, spectral_pop=0.45,
+        colour_jump=0.09, colour_spread=0.55, full_room_accent=0.94,
+        energy_gain=0.15,
+        melbank_gain=0.44, melbank_floor=0.035, colour_flow=0.05, spectral_pop=0.45,
     ),
     # UNRESTRAINED (eye-safety limiter bypassed - explicit user choice, see
-    # effects/safety.py). A UNIFIED room: every lamp reacts together, the whole
-    # room brightening and dimming with the song's energy (energy_gain) and all
-    # lamps bursting bright on each beat like fireworks (big beat_gain, no
-    # instrument split). Colour jumps with the beat. A big step up from High.
+    # effects/safety.py). A UNIFIED but ATMOSPHERIC room tuned for downtempo /
+    # ambient-leaning music (Lumin Rain and similar): it breathes with the song's
+    # energy (energy_gain) over a strong continuous spectrum layer (melbank_gain),
+    # and keeps the beat as a smooth, lingering pulse rather than a frantic strobe
+    # — slower colour drift (low colour_jump), longer flash glow (high
+    # flash_decay) and a gentle fade (low bri_decay), with a soft spatial colour
+    # gradient (colour_spread) so it never collapses to Extreme's flat single hue.
+    # Selective: only standout beats slam (higher highlight_quantile), ordinary
+    # beats groove at a softer weak_pulse, so the rhythm reads without strobing.
+    # This is the clear step DOWN in aggression from Extreme (which stays the
+    # frantic, flat-hue, every-beat-detonates maximum).
     SyncMode.INTENSE: ModeParams(
-        base=0.0, floor=0.025, bass_gain=0.10, beat_gain=2.3, beat_threshold=1.0,
-        spread=0.0, colour_speed=0.05, shimmer=0.0, colour_sat=0.95,
-        colour_beat_step=0.0, colour_lerp=0.62, energy_gain=0.12,
-        bri_attack=1.0, bri_decay=0.50,
-        wave_gain=0.55, wave_speed=3.0, wave_width=0.26,
-        anticipation_ms=90, drop_boost=0.90, build_desat=0.55,
-        role_mix=(1.0, 0.0, 0.0), hard_snap=True, flash_decay=0.62,
-        highlight_quantile=0.20, weak_pulse=0.40, downbeat_pulse=0.60,
-        colour_jump=0.17, colour_spread=0.12, full_room_accent=0.0,
-        melbank_gain=0.26, melbank_floor=0.02, colour_flow=0.03, spectral_pop=0.45,
+        base=0.0, floor=0.04, bass_gain=0.16, beat_gain=1.7, beat_threshold=1.0,
+        spread=0.0, colour_speed=0.045, shimmer=0.0, colour_sat=0.95,
+        colour_beat_step=0.0, colour_lerp=0.40, energy_gain=0.18,
+        bri_attack=1.0, bri_decay=0.30,
+        wave_gain=0.55, wave_speed=2.1, wave_width=0.34,
+        anticipation_ms=90, drop_boost=0.70, build_desat=0.45,
+        role_mix=(1.0, 0.0, 0.0), hard_snap=True, flash_decay=0.80,
+        highlight_quantile=0.32, weak_pulse=0.34, downbeat_pulse=0.60,
+        colour_jump=0.10, colour_spread=0.35, full_room_accent=0.0,
+        melbank_gain=0.42, melbank_floor=0.04, colour_flow=0.05, spectral_pop=0.45,
     ),
     # UNRESTRAINED maximum club. The whole room rides the song's energy from
     # near-black in the quiet parts to FULL brightness in the loud ones (big
