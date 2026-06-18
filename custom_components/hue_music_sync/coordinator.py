@@ -93,6 +93,10 @@ _RECONNECT_MAX_S = 8.0
 _META_UPGRADE_START_S = 3.0
 _META_UPGRADE_MAX_S = 60.0
 
+# Drum-pad mode auto-expires this long after the last tap / keepalive, so an
+# abruptly-closed card can never strand the room with its automatic beats off.
+_DRUM_WINDOW_S = 4.0
+
 
 def _circular_distance(a: float, b: float, period: float) -> float:
     """Smallest distance between two phases on a cyclic timeline of ``period``."""
@@ -233,6 +237,7 @@ class SyncSession:
         self._upgrade_at = 0.0
         self._upgrade_interval = _META_UPGRADE_START_S
         self._prefetch_key: str | None = None  # next-track map already requested
+        self._drum_until = 0.0  # drum-pad mode active while monotonic() < this
 
     @property
     def settings(self) -> AreaSettings:
@@ -289,6 +294,21 @@ class SyncSession:
         if self._source is not None and settings.media_player != prev.media_player:
             # Player changed: drop current source so the loop re-opens it.
             self._hass.async_create_task(self._reset_source())
+
+    # -- drum-pad (manual beats) ----------------------------------------------
+
+    def set_drum_mode(self, active: bool) -> None:
+        """Arm/refresh (or release) drum-pad mode from the card.
+
+        Auto-expires (see ``_DRUM_WINDOW_S``); the card keepalives it while the
+        page is open, so a missed close can't leave the room's auto beats off.
+        """
+        self._drum_until = time.monotonic() + _DRUM_WINDOW_S if active else 0.0
+
+    def manual_tap(self, group: str, strength: float = 0.95) -> None:
+        """A pad tap from the card: flash the group's lights and keep drum mode on."""
+        self._drum_until = time.monotonic() + _DRUM_WINDOW_S
+        self._engine.manual_flash(group, strength)
 
     def _apply_colour(self) -> None:
         # Preset themes are static palettes. Album art and Song are dynamic
@@ -593,6 +613,9 @@ class SyncSession:
                     if map_grid is not None:
                         beatgrid = map_grid
                     self._last_beatgrid = beatgrid
+                    # Drum-pad mode (card taps drive the beats) auto-expires, so
+                    # set it from the live window every frame before rendering.
+                    self._engine.set_manual_only(now < self._drum_until)
                     colors = self._engine.render(frame, period, beatgrid, structure)
                     features = (
                         self._ws_features(frame) if self._ws_active() else None
@@ -667,6 +690,13 @@ class SyncSession:
         (the live-card payload for this frame) rides the same buffer so the
         card's visualizer matches what the room is showing/hearing.
         """
+        # Drum-pad mode: the user is driving the beats, so audio alignment is
+        # irrelevant — skip the delay buffer entirely so taps reach the bulbs
+        # with the least possible latency.
+        if self._engine.manual_only:
+            self._delay_buf.clear()
+            await self._safe_send(colors, features)
+            return
         lead_ms = getattr(self._source, "playback_lead_ms", 0) or 0
         base_ms = max(0, lead_ms - LIGHT_PIPELINE_MS) if lead_ms > 0 else TIMING_BUFFER_MS
         delay_s = max(0.0, (base_ms + self._settings.timing_ms) / 1000.0)
@@ -1191,6 +1221,18 @@ class SyncManager:
         """The meta payload for a subscriber joining mid-session."""
         session = self._sessions.get(area_id)
         return session.ws_meta() if session is not None else None
+
+    def tap(self, area_id: str, group: str, strength: float = 0.95) -> None:
+        """Route a drum-pad tap from the card to the area's live session."""
+        session = self._sessions.get(area_id)
+        if session is not None:
+            session.manual_tap(group, strength)
+
+    def set_drum_mode(self, area_id: str, active: bool) -> None:
+        """Arm/release drum-pad mode for the area's live session."""
+        session = self._sessions.get(area_id)
+        if session is not None:
+            session.set_drum_mode(active)
 
     def _load_settings(self) -> dict[str, AreaSettings]:
         stored = self.entry.options.get("area_settings", {})

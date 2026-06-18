@@ -13,7 +13,7 @@
 // Cosmetic version (shown in the console banner). The browser cache-bust no
 // longer depends on this: the integration appends ?v=<content-hash> derived from
 // this file's bytes, so any edit is picked up without a manual hard refresh.
-const VERSION = "1.14.2";
+const VERSION = "1.15.0";
 
 /* ------------------------- Palette data ------------------------- */
 // Colour schemes from the integration, each a small gradient swatch.
@@ -380,15 +380,29 @@ const CARD_CSS = `
   }
 
   /* -- calibration overlay (tap-to-sync) -- */
-  .hue-cal { position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 10px; border-radius: 26px; cursor: pointer;
+  /* -- play-the-beats drum pad overlay -- */
+  .hue-drum { position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px; border-radius: 26px; padding: 18px;
     background: #0b0a14ee; backdrop-filter: blur(8px); user-select: none; -webkit-user-select: none; }
   .hue-cal-title { font-size: 16px; font-weight: 800; letter-spacing: .02em; }
-  .hue-cal-sub { font-size: 12.5px; color: var(--hue-dim); }
-  .hue-cal-count { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
-  .hue-cal-pulse { width: 64px; height: 64px; border-radius: 50%; border: 2px solid #ffffff44;
-    display: flex; align-items: center; justify-content: center; transition: transform .08s, box-shadow .08s; }
-  .hue-cal-cancel { margin-top: 6px; font-size: 11px; color: var(--hue-faint); text-transform: uppercase; letter-spacing: .1em; }
+  .hue-cal-sub { font-size: 12.5px; color: var(--hue-dim); text-align: center; }
+  .hue-cal-cancel { margin-top: 6px; font-size: 11px; color: var(--hue-faint); text-transform: uppercase;
+    letter-spacing: .1em; cursor: pointer; }
+  .hue-drum-pads { display: flex; gap: 12px; width: 100%; max-width: 360px; }
+  .hue-drum-pad { flex: 1; aspect-ratio: 1 / 1; min-width: 0; border-radius: 18px; cursor: pointer;
+    border: 1px solid var(--hue-line); color: #fff; font-family: var(--hk); padding: 12px;
+    background: radial-gradient(120% 120% at 50% 28%, var(--pad), #0c0b18);
+    box-shadow: inset 0 0 0 1px #ffffff1f, inset 0 0 26px -10px #000a;
+    display: flex; align-items: flex-end; justify-content: center; transition: transform .06s, filter .12s; }
+  .hue-drum-pad:disabled { opacity: .4; cursor: default; }
+  .hue-drum-pad:active { transform: scale(.96); }
+  .hue-drum-pad-label { font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+    text-shadow: 0 1px 6px #000a; }
+  .hue-drum-pad.hit { animation: hue-drum-hit .42s ease-out; }
+  @keyframes hue-drum-hit {
+    0% { filter: brightness(1.9); transform: scale(1.05); }
+    100% { filter: brightness(1); transform: scale(1); }
+  }
 
   /* -- intensity preview micro-animations -- */
   .hue-seg-anim { position: absolute; left: 50%; bottom: 3px; transform: translateX(-50%);
@@ -563,7 +577,7 @@ class HueMusicSyncCard extends HTMLElement {
     this._reduced =
       typeof matchMedia === "function" &&
       matchMedia("(prefers-reduced-motion: reduce)").matches;
-    this._cal = null;         // tap-to-sync calibration state
+    this._drum = null;        // drum-pad ("play the beats") overlay state
   }
 
   /* -- config -- */
@@ -970,7 +984,7 @@ class HueMusicSyncCard extends HTMLElement {
 
   _renderImpl() {
     if (!this._config) return;
-    if (this._cal) return; // don't tear the DOM down mid-calibration
+    if (this._drum) return; // don't tear the DOM down while the drum page is open
     const m = this._model();
     const accent = m.accent;
     const pal = m.colour.selected;
@@ -1677,100 +1691,157 @@ class HueMusicSyncCard extends HTMLElement {
     wrap.appendChild(mk("-", -step, "Earlier"));
     wrap.appendChild(readout);
     wrap.appendChild(mk("+", step, "Later"));
-    // Tap-to-sync: calibrate the offset by tapping along with the music.
+    // Play-the-beats: open the drum pad and drive the lights with your taps.
     const tap = document.createElement("button");
     tap.className = "hue-step";
-    tap.textContent = "\u266a";
-    tap.title = "Tap to sync";
-    tap.setAttribute("aria-label", "Calibrate timing by tapping the beat");
-    tap.addEventListener("click", () => this._startCal(m));
+    tap.textContent = "\ud83e\udd41"; // drum
+    tap.title = "Play the beats";
+    tap.setAttribute("aria-label", "Open the drum pad to play the beats");
+    tap.addEventListener("click", () => this._startDrums(m));
     wrap.appendChild(tap);
     return wrap;
   }
 
-  /* -- tap-to-sync calibration -- */
-  _startCal(m) {
-    if (!this._cardNode || this._cal) return;
-    const p = this._play;
-    if (!p || !p.playing || !(p.bpm > 0)) return; // needs a locked, playing beat
+  /* -- play-the-beats drum pad --
+     A page of three pads (Low / Mid / High). Each pad drives a third of the
+     room's lights (by spectral order). While it's open the integration pauses
+     its automatic beat-flashes, so your taps ARE the beats; the music's colour
+     and energy keep flowing underneath. Backed by the hue_music_sync/tap and
+     /drum WebSocket commands; the drum mode auto-expires server-side, kept alive
+     by a heartbeat while this page is open. */
+  _startDrums(m) {
+    if (!this._cardNode || this._drum) return;
+    const accent = this._accent || "#7b5cff";
+    const playing = !!(this._play && this._play.playing);
+
     const overlay = document.createElement("div");
-    overlay.className = "hue-cal";
+    overlay.className = "hue-drum";
     const title = document.createElement("div");
     title.className = "hue-cal-title";
-    title.textContent = "Tap the beat";
+    title.textContent = "Play the beats";
     const sub = document.createElement("div");
     sub.className = "hue-cal-sub";
-    sub.textContent = "Tap anywhere in time with what you hear";
-    const pulse = document.createElement("div");
-    pulse.className = "hue-cal-pulse";
-    const count = document.createElement("div");
-    count.className = "hue-cal-count";
-    count.textContent = "0 / 8";
-    pulse.appendChild(count);
-    const cancel = document.createElement("div");
-    cancel.className = "hue-cal-cancel";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("pointerdown", (e) => {
-      e.stopPropagation();
-      this._endCal();
-    });
-    overlay.append(title, sub, pulse, cancel);
-    overlay.addEventListener("pointerdown", () => this._calTap());
-    this._cardNode.appendChild(overlay);
-    this._cal = { taps: [], overlay, pulse, count, sub, m, done: false };
-  }
+    sub.textContent = playing
+      ? "Tap the pads in time — you drive the lights"
+      : "Play a song first, then drum along";
 
-  _calTap() {
-    const cal = this._cal;
-    const p = this._play;
-    if (!cal || cal.done || !p) return;
-    cal.taps.push(p.position + (Date.now() - p.updatedAt) / 1000);
-    cal.count.textContent = `${cal.taps.length} / 8`;
-    cal.pulse.style.transform = "scale(1.18)";
-    cal.pulse.style.boxShadow = `0 0 26px ${this._accent || "#7b5cff"}`;
-    setTimeout(() => {
-      if (this._cal === cal) {
-        cal.pulse.style.transform = "";
-        cal.pulse.style.boxShadow = "";
+    const padWrap = document.createElement("div");
+    padWrap.className = "hue-drum-pads";
+    const groups = [["low", "Low"], ["mid", "Mid"], ["high", "High"]];
+    const padNodes = {};
+    for (const [id, label] of groups) {
+      const pad = document.createElement("button");
+      pad.className = "hue-drum-pad";
+      pad.disabled = !playing;
+      pad.style.setProperty("--pad", accent);
+      const lab = document.createElement("span");
+      lab.className = "hue-drum-pad-label";
+      lab.textContent = label;
+      pad.appendChild(lab);
+      if (playing) {
+        pad.addEventListener("pointerdown", (e) => {
+          e.preventDefault();
+          this._drumTap(id);
+        });
       }
-    }, 90);
-    if (cal.taps.length >= 8) this._finishCal();
+      padWrap.appendChild(pad);
+      padNodes[id] = pad;
+    }
+
+    const close = document.createElement("div");
+    close.className = "hue-cal-cancel";
+    close.textContent = "Done";
+    close.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      this._endDrums();
+    });
+
+    overlay.append(title, sub, padWrap, close);
+    this._cardNode.appendChild(overlay);
+    this._drum = { overlay, pads: padNodes, playing, keep: 0 };
+
+    if (playing) {
+      this._sendDrum(true);
+      // Heartbeat so the server-side drum window never lapses while we're open.
+      this._drum.keep = setInterval(() => this._sendDrum(true), 2000);
+      this._updateDrumTints();
+    }
   }
 
-  _finishCal() {
-    const cal = this._cal;
-    const p = this._play;
-    if (!cal || !p) return;
-    cal.done = true;
-    // Circular mean of the taps' phase against the integration's beat grid:
-    // how far the *heard* beat sits from where the grid says it is.
-    const period = 60 / p.bpm;
-    const anchor = Number.isFinite(p.beatAnchor) ? p.beatAnchor : 0;
-    let sx = 0;
-    let sy = 0;
-    for (const t of cal.taps.slice(2)) { // drop the first taps (settling in)
-      const ang = (((t - anchor) % period) / period) * 2 * Math.PI;
-      sx += Math.cos(ang);
-      sy += Math.sin(ang);
+  _drumTap(group) {
+    const d = this._drum;
+    if (!d) return;
+    const pad = d.pads[group];
+    if (pad) {
+      pad.classList.remove("hit");
+      void pad.offsetWidth; // restart the hit animation
+      pad.classList.add("hit");
     }
-    const meanBeats = Math.atan2(sy, sx) / (2 * Math.PI); // -0.5 .. 0.5
-    const offsetMs = Math.round((meanBeats * period * 1000) / 10) * 10;
-    const tm = cal.m.timing;
-    const applied = Math.max(tm.min, Math.min(tm.max, tm.value + offsetMs));
-    this._callNumber(tm.entity, applied, "timing");
-    cal.count.textContent = `${offsetMs >= 0 ? "+" : ""}${offsetMs} ms`;
-    cal.sub.textContent = "Timing adjusted";
-    setTimeout(() => {
-      this._endCal();
-      this._render();
-    }, 1400);
+    this._sendTap(group);
   }
 
-  _endCal() {
-    if (this._cal) {
-      this._cal.overlay.remove();
-      this._cal = null;
+  _endDrums() {
+    const d = this._drum;
+    if (!d) return;
+    if (d.keep) clearInterval(d.keep);
+    if (d.playing) this._sendDrum(false); // hand the beats back to the music
+    d.overlay.remove();
+    this._drum = null;
+    this._render(); // repaint the normal card (state may have moved on)
+  }
+
+  _drumMessage(payload) {
+    const area = this._areas[this._areaIndex] || {};
+    const conn = this._hass && this._hass.connection;
+    if (!conn || !area.switch || this._demo) return;
+    try {
+      conn.sendMessagePromise({ ...payload, entity_id: area.switch }).catch(() => {});
+    } catch (_) { /* connection went away */ }
+  }
+
+  _sendTap(group) {
+    this._drumMessage({ type: "hue_music_sync/tap", group });
+  }
+
+  _sendDrum(active) {
+    this._drumMessage({ type: "hue_music_sync/drum", active });
+  }
+
+  // Tint each pad with the live colour of the lights it controls (same
+  // left->right spectral split the integration uses for the groups).
+  _updateDrumTints() {
+    const d = this._drum;
+    if (!d || !d.playing) return;
+    const positions = this._liveMeta && this._liveMeta.positions;
+    const lights = (this._live && this._live.lights) || {};
+    if (!positions) return;
+    const ids = Object.entries(positions)
+      .sort((a, b) => a[1][0] - b[1][0])
+      .map((e) => e[0]);
+    const n = ids.length;
+    if (!n) return;
+    const a = Math.round(n / 3);
+    const b = Math.round((2 * n) / 3);
+    const groups = n < 3
+      ? { low: ids, mid: ids, high: ids }
+      : { low: ids.slice(0, a), mid: ids.slice(a, b), high: ids.slice(b) };
+    for (const g of ["low", "mid", "high"]) {
+      const pad = d.pads[g];
+      if (!pad) continue;
+      const hexes = groups[g].map((c) => lights[c]).filter(Boolean);
+      if (hexes.length) pad.style.setProperty("--pad", this._avgHex(hexes));
     }
+  }
+
+  _avgHex(hexes) {
+    let r = 0, g = 0, b = 0;
+    for (const h of hexes) {
+      r += parseInt(h.slice(1, 3), 16);
+      g += parseInt(h.slice(3, 5), 16);
+      b += parseInt(h.slice(5, 7), 16);
+    }
+    const k = hexes.length || 1;
+    return rgbToHex(r / k, g / k, b / k);
   }
 
   /* ------------------------- Visualizer loop ------------------------- */
@@ -1795,6 +1866,7 @@ class HueMusicSyncCard extends HTMLElement {
     this._viz.step(active, time, p ? p.bpm : 122, p ? p.beatAnchor : null, live);
     this._applyStageLive(live);
     this._applyTimelineLive();
+    if (this._drum) this._updateDrumTints();
     this._bloom *= 0.95;
 
     // Transport time readout (mm:ss / mm:ss).

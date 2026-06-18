@@ -31,11 +31,27 @@ DATA_WS_REGISTERED = "ws_registered"
 
 
 def async_register_ws(hass: HomeAssistant) -> None:
-    """Register the subscribe command once per HA instance."""
+    """Register the card's WebSocket commands once per HA instance."""
     if hass.data[DOMAIN].get(DATA_WS_REGISTERED):
         return
     hass.data[DOMAIN][DATA_WS_REGISTERED] = True
     websocket_api.async_register_command(hass, ws_subscribe)
+    websocket_api.async_register_command(hass, ws_tap)
+    websocket_api.async_register_command(hass, ws_drum)
+
+
+def _resolve_area(hass: HomeAssistant, connection, msg):
+    """(manager, area_id) for a sync switch entity, or None after sending an error."""
+    from . import DATA_AREA_INDEX  # local import to avoid a setup cycle
+
+    index = hass.data.get(DOMAIN, {}).get(DATA_AREA_INDEX, {})
+    target = index.get(msg["entity_id"])
+    if target is None:
+        connection.send_error(
+            msg["id"], "not_found", f"No sync switch {msg['entity_id']}"
+        )
+        return None
+    return target
 
 
 @websocket_api.websocket_command(
@@ -79,3 +95,45 @@ def ws_subscribe(
     snapshot = manager.ws_snapshot(area_id)
     if snapshot:
         forward(snapshot)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/tap",
+        vol.Required("entity_id"): str,
+        vol.Optional("group", default="all"): vol.In(("low", "mid", "high", "all")),
+        vol.Optional("strength", default=0.95): vol.Coerce(float),
+    }
+)
+@callback
+def ws_tap(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+) -> None:
+    """Drum-pad tap: flash a light group's beat (the manual equivalent of an
+    audio-detected beat). Same low-sensitivity, authenticated-user scope as the
+    live feed."""
+    target = _resolve_area(hass, connection, msg)
+    if target is not None:
+        manager, area_id = target
+        manager.tap(area_id, msg["group"], msg["strength"])
+        connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/drum",
+        vol.Required("entity_id"): str,
+        vol.Required("active"): bool,
+    }
+)
+@callback
+def ws_drum(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+) -> None:
+    """Arm/release drum-pad mode (the card keepalives this while the page is open;
+    it auto-expires server-side so an abrupt close can't strand the room)."""
+    target = _resolve_area(hass, connection, msg)
+    if target is not None:
+        manager, area_id = target
+        manager.set_drum_mode(area_id, msg["active"])
+        connection.send_result(msg["id"])

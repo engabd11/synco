@@ -98,6 +98,10 @@ class EffectEngine:
         self._beats_seen = 0
         self._waves: list[Wave] = []  # live beat wavefronts
         self._wave_armed = True  # PLL anticipation: ready to fire the next wave
+        # Drum-pad mode: when set, the automatic beat reactions (flashes, waves,
+        # beat colour-jumps) are suppressed so the user's taps drive the beats;
+        # the continuous colour/energy ambience keeps running underneath.
+        self.manual_only = False
         self._fireworks = FireworksEffect()
         self.set_channels(channels)
 
@@ -297,6 +301,46 @@ class EffectEngine:
         """Master brightness ceiling (0..1), scaling the mode's output."""
         self.brightness = max(0.0, min(1.0, brightness))
 
+    # -- drum-pad / manual beats ----------------------------------------------
+
+    def set_manual_only(self, on: bool) -> None:
+        """Suppress (or restore) the automatic beat reactions for drum-pad mode."""
+        self.manual_only = bool(on)
+
+    def _group_channels(self, group: str) -> list[int]:
+        """Channels for a drum pad: thirds of the left→right spectral order.
+
+        ``low``/``mid``/``high`` map to the left/centre/right third of the lamps
+        (the same low→high spectral axis the room mirror shows). ``all`` — or any
+        room with fewer than three lamps, where thirds don't divide cleanly — maps
+        to every lamp so a tap is never a no-op.
+        """
+        ids = self._rank_ids
+        n = len(ids)
+        if n == 0:
+            return []
+        if n < 3 or group == "all":
+            return list(ids)
+        a, b = round(n / 3), round(2 * n / 3)
+        if group == "low":
+            return ids[:a]
+        if group == "high":
+            return ids[b:]
+        return ids[a:b]  # "mid" (and any unknown group) -> the centre third
+
+    def manual_flash(self, group: str, strength: float = 0.95) -> None:
+        """Fire a one-shot beat flash on a pad's light group (a user tap).
+
+        Writes the same per-light overlay the automatic beats use, so it rides
+        the existing decay + brightness path; a small colour step makes the hue
+        move with each hit too. Only meaningful while the render loop runs (music
+        playing); on an idle frame there is nothing to apply it to.
+        """
+        s = max(0.0, min(1.0, strength))
+        for cid in self._group_channels(group):
+            self._light_flash[cid] = max(self._light_flash.get(cid, 0.0), s)
+        self.colour_phase += 0.12  # the room's colour also moves on your hit
+
     @property
     def active_params(self):
         """Render params for the current effect.
@@ -475,7 +519,11 @@ class EffectEngine:
             and beatgrid.period_s > 0.05
             and p.colour_beat_step > 0.0
         )
-        if p.colour_jump > 0.0:
+        if self.manual_only:
+            # Drum mode: colour moves only via the continuous drift above and
+            # your taps; the automatic per-beat colour jumps are suppressed.
+            pass
+        elif p.colour_jump > 0.0:
             if beat_now:
                 # Every beat jumps; highlights jump ~1.7x so the standout hits
                 # land the biggest hue change.
@@ -499,7 +547,8 @@ class EffectEngine:
 
         # Spatial beat wavefronts (predictive when a beat grid is supplied).
         if p.wave_gain > 0.0:
-            self._spawn_waves(p, frame, beatgrid, vis_strength)
+            if not self.manual_only:  # drum mode: no automatic wavefronts
+                self._spawn_waves(p, frame, beatgrid, vis_strength)
             for w in self._waves:
                 w.advance(dt, decay_tau=0.45)
             self._waves = [w for w in self._waves if not w.dead()]
@@ -532,7 +581,7 @@ class EffectEngine:
         decay = p.flash_decay  # per-mode: lower = snappier firework fall
         for cid in lf:
             lf[cid] *= decay
-        if kick > 0.0 or midf > 0.0:
+        if not self.manual_only and (kick > 0.0 or midf > 0.0):
             for cid, role in self.roles.items():
                 if full_room:
                     f = kick * (0.85 if role == ROLE_VOCAL else 1.0)
