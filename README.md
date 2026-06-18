@@ -37,7 +37,7 @@ For Snapcast-backed players the live audio stream is tapped directly; for stream
 
 ### Choreography
 - **5 intensity modes** (Subtle → Medium → High → Intense → Extreme) sharing the same unified renderer with different parameters
-- **Instrument role assignment** — lights are divided into bass, guitar, and vocal roles that rotate every few bars to keep the show surprising
+- **Instrument role assignment** — lights are divided into bass, guitar, and vocal roles, spread evenly around the room and rotated every few bars; the split scales cleanly from 1 to 10 lights so larger rooms stay balanced
 - **3D spatial waves** — beat wavefronts sweep the room using actual lamp positions from the entertainment area; low frequencies to one side, highs to the other; treble assigned to higher lamps
 - **Beat highlight selection** — brightness pops only on beats that stand out against the recent 24-beat window, so not every beat looks the same
 
@@ -57,7 +57,7 @@ A custom Lovelace card is registered automatically — no manual resource downlo
 - Room mirror showing every lamp at its real position, glowing in the exact color being streamed, with instrument-role rings
 - Song-structure timeline with energy silhouette and a playhead; the next section pulses as a drop approaches
 - Transport controls (previous / play-pause / next) that drive the media player directly
-- Tap-to-sync calibrator: tap along for 8 beats, the card measures the offset and writes it to the timing slider automatically
+- **Play-the-beats drum pad** — a Low / Mid / High pad page where each pad drives a third of the room; while it's open the automatic beats pause so *your taps* drive the lights, with the music's colour and energy still flowing underneath
 - Per-mode intensity previews with marquee titles for long track names
 - Respects `prefers-reduced-motion` and pauses animation when the card is off-screen
 
@@ -121,9 +121,9 @@ Each entertainment area gets the following entities:
 |---|---|---|
 | **Subtle** | On | Gentle spatial gradient, soft color drift, small beat steps |
 | **Medium** | On | Visible dimming, soft flashes on stronger beats, wide color spread |
-| **High** | On | Per-instrument spatial split; roles rotate every few bars |
-| **Intense** | Off | Whole-room unified reaction, hard flashes on standout beats |
-| **Extreme** | Off | Maximum range, every beat pulses, fastest response |
+| **High** | On | Per-instrument spatial split (bass / guitar / vocal), spread around the room; tuned to breathe with atmospheric, groove-led music |
+| **Intense** | Off | Unified but **atmospheric** — breathes with the song's energy and grooves on the beat with slower, smoother motion than Extreme; suits downtempo / ambient-leaning albums |
+| **Extreme** | Off | Maximum club — every beat detonates the whole room, widest range, fastest response |
 
 ### Effects
 
@@ -189,6 +189,6 @@ The DTLS transport is implemented in pure Python — no external OpenSSL depende
 
 - **Hue Bridge v2 only** — the v1 (round) bridge does not support Entertainment streaming
 - **One area streaming at a time per bridge** — a single DTLS channel per bridge; multiple bridges each get their own entry
-- **Track analysis takes a moment** — full offline analysis can take 10+ seconds on slower hardware; the fallback metadata animation runs during this window
+- **Track analysis takes a moment** — full offline analysis can take 10+ seconds on slower hardware; the fallback animation runs during this window, then the show upgrades to the real analysis as soon as it is ready (transient failures, e.g. a busy library, are retried automatically, and the next track is pre-analysed for gapless transitions)
 - **Playback position granularity** — players that report position coarsely (e.g. Sonos at ~500 ms) reduce track-map timing precision
 - **Intense / Extreme strobing** — these modes bypass the flash limiter by design; they are not suitable for anyone with photosensitivity
