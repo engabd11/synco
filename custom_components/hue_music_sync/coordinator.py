@@ -97,6 +97,13 @@ _META_UPGRADE_MAX_S = 60.0
 # abruptly-closed card can never strand the room with its automatic beats off.
 _DRUM_WINDOW_S = 4.0
 
+# One regime per track (item 4 — "pick one and stick with it"): the offline map
+# grid is adopted only if it's ready within this many seconds of the track's
+# start (cached / pre-warmed / quick analysis). If the track is already well
+# underway on the causal grid, we stay on it for the rest of the track rather
+# than switching mid-song, and the freshly-analysed map is cached for next time.
+_MAP_COMMIT_WINDOW_S = 6.0
+
 
 def _circular_distance(a: float, b: float, period: float) -> float:
     """Smallest distance between two phases on a cyclic timeline of ``period``."""
@@ -209,11 +216,17 @@ class SyncSession:
         self._mapper = TrackMapper(
             ffmpeg_bin,
             spawner=lambda coro, name: hass.async_create_background_task(coro, name),
+            # Persist analyzed maps under HA's config dir so a track plays
+            # instantly the second time (and after a library pre-warm).
+            cache_dir=hass.config.path("hue_music_sync", "trackmaps"),
         )
         self._map_track: str | None = None  # last track a map URL was resolved for
         self._map_check = 0.0
         self._map_prev_pos: float | None = None
         self._map_section: Section | None = None
+        # Per-track regime commitment (item 4): None = undecided, True = use the
+        # offline map grid this track, False = stay on the causal grid this track.
+        self._map_commit: bool | None = None
         self._play_track: str | None = None  # last track seen by the rhythm models
         self._fallback_track: str | None = None  # track the metadata source opened on
         self._source: (
@@ -597,6 +610,7 @@ class SyncSession:
                         self._beat_anchor = None
                         self._map_prev_pos = None
                         self._map_section = None
+                        self._map_commit = None  # re-decide the regime per track
                     # Causal beat grid (always running; the fallback rhythm model).
                     beatgrid = self._tempo.update(
                         frame.t_audio, frame.flux, frame.beat, frame.beat_strength,
@@ -922,10 +936,16 @@ class SyncSession:
         if src is None:
             return None
         tm = self._mapper.get(src.track_id)
-        if tm is None:
-            return None
         pos = self._analysis_position()
-        if pos is None:
+        # Commit to one regime per track (item 4): adopt the map only if it's
+        # ready near the track start; otherwise stay causal for the rest of the
+        # track instead of switching mid-song. Decided once, then latched.
+        if self._map_commit is None and pos is not None:
+            if tm is not None and pos <= _MAP_COMMIT_WINDOW_S:
+                self._map_commit = True
+            elif pos > _MAP_COMMIT_WINDOW_S:
+                self._map_commit = False  # too late to switch without a jarring jump
+        if not self._map_commit or tm is None or pos is None:
             return None
         grid = tm.grid_at(pos, self._map_prev_pos)
         self._map_prev_pos = pos

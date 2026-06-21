@@ -56,6 +56,70 @@ def map_120() -> TrackMap:
     return tm
 
 
+# --- persistent disk cache -------------------------------------------------
+
+def test_track_map_save_load_round_trips(map_120: TrackMap, tmp_path):
+    path = tmp_path / "m.npz"
+    map_120.save(path)
+    assert path.exists()
+    back = TrackMap.load(path)
+    assert back is not None and back.usable
+    assert back.bpm == pytest.approx(map_120.bpm)
+    assert back.downbeat == map_120.downbeat
+    np.testing.assert_allclose(back.beats, map_120.beats)
+    np.testing.assert_allclose(back.accents, map_120.accents)
+    assert (back.features is None) == (map_120.features is None)
+    if map_120.features is not None:
+        np.testing.assert_allclose(back.features.energy, map_120.features.energy)
+        np.testing.assert_allclose(back.features.melbank, map_120.features.melbank)
+    assert len(back.sections) == len(map_120.sections)
+    # A reloaded map drives playback identically (same scheduled frame).
+    a = map_120.frame_at(5.0, 4.9)
+    b = back.frame_at(5.0, 4.9)
+    assert a is not None and b is not None
+    assert a.beat == b.beat and a.beat_strength == pytest.approx(b.beat_strength)
+
+
+def test_load_rejects_a_stale_format(map_120: TrackMap, tmp_path, monkeypatch):
+    import hue_music_sync.audio.trackmap as tmmod
+    path = tmp_path / "m.npz"
+    map_120.save(path)
+    monkeypatch.setattr(tmmod, "_CACHE_FORMAT", tmmod._CACHE_FORMAT + 1)
+    assert TrackMap.load(path) is None  # version mismatch → ignored, not mis-read
+
+
+def test_load_handles_a_corrupt_file(tmp_path):
+    bad = tmp_path / "bad.npz"
+    bad.write_bytes(b"not an npz")
+    assert TrackMap.load(bad) is None
+
+
+def test_mapper_loads_from_disk_without_reanalysing(map_120: TrackMap, tmp_path):
+    # Pre-seed the disk cache, then a fresh mapper must serve the map from disk
+    # via ensure() and NEVER spawn an analysis task.
+    spawned = []
+    mapper = TrackMapper(
+        "ffmpeg",
+        spawner=lambda coro, name: spawned.append(name) or _DummyTask(coro),
+        cache_dir=tmp_path,
+    )
+    tid = "artist|title|1"
+    mapper._save_disk(tid, map_120)
+    assert mapper.has_disk(tid)
+    assert mapper.get(tid) is None  # not in memory yet
+    mapper.ensure(tid, "http://example/stream")  # loads from disk, no analysis
+    assert spawned == []  # crucially: no analysis was kicked off
+    assert mapper.get(tid) is not None  # now served from memory
+
+
+class _DummyTask:
+    def __init__(self, coro):
+        coro.close()  # we never run it; just don't leak the coroutine
+
+    def done(self):
+        return True
+
+
 def test_offline_tempo_is_exact(map_120: TrackMap):
     assert map_120.usable
     assert abs(map_120.bpm - 120.0) < 2.0

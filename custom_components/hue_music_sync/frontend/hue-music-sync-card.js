@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Hue Music Sync Card - "Ambient Glow"
  * A Home Assistant custom Lovelace card for the Hue Music Sync integration.
  *
@@ -13,7 +13,7 @@
 // Cosmetic version (shown in the console banner). The browser cache-bust no
 // longer depends on this: the integration appends ?v=<content-hash> derived from
 // this file's bytes, so any edit is picked up without a manual hard refresh.
-const VERSION = "1.15.0";
+const VERSION = "1.16.0";
 
 /* ------------------------- Palette data ------------------------- */
 // Colour schemes from the integration, each a small gradient swatch.

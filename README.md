@@ -121,9 +121,9 @@ Each entertainment area gets the following entities:
 |---|---|---|
 | **Subtle** | On | Gentle spatial gradient, soft color drift, small beat steps |
 | **Medium** | On | Visible dimming, soft flashes on stronger beats, wide color spread |
-| **High** | On | Per-instrument spatial split (bass / guitar / vocal), spread around the room; tuned to breathe with atmospheric, groove-led music |
-| **Intense** | Off | Unified but **atmospheric** — breathes with the song's energy and grooves on the beat with slower, smoother motion than Extreme; suits downtempo / ambient-leaning albums |
-| **Extreme** | Off | Maximum club — every beat detonates the whole room, widest range, fastest response |
+| **High** | On | Per-instrument spatial split (bass / guitar / vocal) spread around the room, **dynamically assigned to the instruments actually playing** so no lamp sits dull on an absent one, re-dealt as the song changes |
+| **Intense** | Off | Unified club with a fast but **smooth** dim↔bright swing on the beat (no strobe), colour shifting each hit; keeps a soft glow in the gaps (higher dark floor than Extreme) |
+| **Extreme** | Off | Same quick smooth swing, but a **true dark room** (floor 0) — the quiet parts go black and every beat brightens the whole room out of the dark; widest range, fastest response |
 
 ### Effects
 
@@ -168,7 +168,8 @@ Audio source (Snapcast tap / stream URL / track map)
         ↓
 Real-time analysis (5-band FFT, 16-bin melbank, SuperFlux onsets, tempo)
         ↓
-Offline track map (beat grid, downbeats, section boundaries — analysed once, cached)
+Offline track map (beat grid, downbeats, section boundaries — analysed once,
+then cached to disk so the same track plays instantly the next time)
         ↓
 Album art → CIELAB color palette extraction
         ↓

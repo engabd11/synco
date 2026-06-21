@@ -189,6 +189,41 @@ def test_roles_rotate_after_the_scheduled_beats():
     assert sorted(after.values()) == sorted(before.values())
 
 
+def test_dynamic_roles_skip_absent_instruments_and_follow_present_ones():
+    # Item 6: a static "guitar"/"vocal" role on a track with no mids/highs left
+    # a lamp dull. With dynamic_roles (High), the split is weighted by which
+    # bands are actually playing: a bass-only passage gives (nearly) all lamps to
+    # bass; when mids/highs come in, lamps are re-dealt to them on rotation.
+    eng = EffectEngine(_channels(6))
+    eng.set_mode(SyncMode.HIGH)
+
+    def bass_only() -> AnalysisFrame:
+        return AnalysisFrame(
+            bands={"sub_bass": 0.9, "bass": 0.9, "low_mid": 0.0, "mid": 0.0, "high": 0.0},
+            energy=0.7, bass_beat=True, bass_strength=2.0, beat=True, beat_strength=2.0,
+        )
+
+    def full_band() -> AnalysisFrame:
+        return AnalysisFrame(
+            bands={"sub_bass": 0.8, "bass": 0.8, "low_mid": 0.8, "mid": 0.8, "high": 0.8},
+            energy=0.8, bass_beat=True, bass_strength=2.0, beat=True, beat_strength=2.0,
+        )
+
+    # Play a long bass-only passage (let presence settle + several rotations).
+    for _ in range(600):
+        eng.render(bass_only(), _DT)
+    bass_only_counts = {r: list(eng.roles.values()).count(r) for r in (ROLE_BASS, ROLE_MID, ROLE_VOCAL)}
+    # Almost everything is bass; mids/vocals are absent so barely any lamp wastes itself there.
+    assert bass_only_counts[ROLE_BASS] >= 5
+    assert bass_only_counts[ROLE_MID] + bass_only_counts[ROLE_VOCAL] <= 1
+
+    # Now a full-band passage: mids/highs earn their lamps back.
+    for _ in range(900):
+        eng.render(full_band(), _DT)
+    full_counts = {r: list(eng.roles.values()).count(r) for r in (ROLE_BASS, ROLE_MID, ROLE_VOCAL)}
+    assert full_counts[ROLE_MID] >= 1 and full_counts[ROLE_VOCAL] >= 1
+
+
 def test_extreme_sub_threshold_onset_stays_dimmer_than_a_big_kick():
     # Club Extreme reacts to far more now, but a genuinely sub-threshold onset
     # still must not flash like a real kick - the big kick slams much brighter.

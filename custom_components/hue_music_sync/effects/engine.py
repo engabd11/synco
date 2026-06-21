@@ -73,6 +73,12 @@ _ENV_FALL = 0.10
 _MEL_SLOW_RISE = 0.25
 _MEL_SLOW_FALL = 0.06
 
+# Per-band "presence" envelope (which instruments are actually playing right now):
+# rises in ~0.5 s when a band comes alive, falls over ~3 s so a brief gap doesn't
+# drop it. Drives dynamic role assignment so no lamp sits on a dead band.
+_PRESENCE_RISE = 0.04
+_PRESENCE_FALL = 0.008
+
 # Locked mid (guitar/snare) pops are quantised to the eighth-note grid: hits
 # within this phase distance of an eighth slot (on-beat or off-beat) pass,
 # syllables and ornaments floating between slots do not.
@@ -150,6 +156,11 @@ class EffectEngine:
             ch.channel_id: ((0.0, 0.0, 0.0), 0.0) for ch in channels
         }
         self._env: dict[str, float] = {}
+        # Per-band presence (slow envelope): which instruments are playing right
+        # now, used to assign dynamic roles only to bands that actually have
+        # content so no lamp is stuck on a dead "guitar"/"vocal" role.
+        self._presence: dict[str, float] = {}
+        self._role_mix_eff: tuple[float, float, float] | None = None
         # Smoothed room loudness (asymmetric follower): the whole room brightens
         # and dims with the song's energy contour. Drives the unified modes.
         self._energy_env: float = 0.0
@@ -179,6 +190,11 @@ class EffectEngine:
             prev = self._env.get(name, 0.0)
             alpha = _ENV_RISE if value > prev else _ENV_FALL
             self._env[name] = prev + (value - prev) * alpha
+            # Slow presence envelope: fast up, slow down (a band stays "present"
+            # through brief gaps so roles don't flicker on every rest).
+            pp = self._presence.get(name, 0.0)
+            pa = _PRESENCE_RISE if value > pp else _PRESENCE_FALL
+            self._presence[name] = pp + (value - pp) * pa
         # Room loudness contour: snap up on a swell, ease down through quieter
         # passages, so the whole room follows the rhythm of the song.
         a = _ENV_RISE if frame.energy > self._energy_env else _ENV_FALL
@@ -225,26 +241,65 @@ class EffectEngine:
         """Rotation counter of the instrument-role layout (read by modes)."""
         return self._role_offset
 
+    def _effective_mix(self, p) -> tuple[float, float, float]:
+        """The (bass, mid, vocal) split to use right now.
+
+        Static modes use the mode's fixed ``role_mix``. ``dynamic_roles`` modes
+        weight it by each band's *presence* so lamps are dealt to the
+        instruments actually playing — a track with no guitar gives its mid
+        lamps to the bass/vocal that ARE there instead of leaving them dull, and
+        the split re-deals as the song's instrumentation changes (item 6). Bass
+        keeps a high floor (there is almost always low end); mid/vocal must be
+        earned by real content.
+        """
+        if not p.dynamic_roles:
+            return p.role_mix
+        pr = self._presence
+        pb = max(pr.get("sub_bass", 0.0), pr.get("bass", 0.0))
+        pm = max(pr.get("low_mid", 0.0), pr.get("mid", 0.0))
+        pv = max(pr.get("high", 0.0), 0.6 * pr.get("low_mid", 0.0))
+        # Bass keeps a floor (low end is almost always there and anchors the
+        # room); mid/vocal get weight ONLY in proportion to real presence, so an
+        # absent instrument drops to zero and its lamps go to bands that are
+        # playing instead of sitting dull. Presence is slow and the mix is only
+        # re-evaluated on rotation, so this never flickers.
+        wb = p.role_mix[0] * (0.5 + pb)
+        wm = p.role_mix[1] * pm
+        wv = p.role_mix[2] * pv
+        s = wb + wm + wv
+        if s <= 1e-6:
+            return p.role_mix
+        return (wb / s, wm / s, wv / s)
+
     def _update_roles(self, p, frame: AnalysisFrame, beatgrid, structure) -> None:
         """Refresh which light plays which instrument; rotate musically.
 
         Rotation advances every ``role_rotate_beats`` musical beats (grid ticks
         when locked, kicks otherwise) and reshuffles instantly on a drop, so
-        the band members keep trading places around the room.
+        the band members keep trading places around the room. The presence-
+        weighted mix (dynamic modes) is re-evaluated on each rotation, so the
+        instrument split also follows what's currently playing.
         """
         ticked = (
             beatgrid.predicted_beat
             if (beatgrid is not None and beatgrid.locked)
             else frame.bass_beat
         )
+        rotated = False
         if ticked and p.role_rotate_beats > 0:
             self._beats_seen += 1
             if self._beats_seen >= p.role_rotate_beats:
                 self._beats_seen = 0
                 self._role_offset += 1
+                rotated = True
         if structure is not None and structure.drop_now:
             self._role_offset += 1  # a drop reshuffles the band
-        role_list = assign_roles(len(self._rank_ids), p.role_mix, self._role_offset)
+            rotated = True
+        # Recompute the (presence-weighted) mix on rotations and the first frame;
+        # holding it steady between rotations keeps roles from flickering.
+        if self._role_mix_eff is None or rotated:
+            self._role_mix_eff = self._effective_mix(p)
+        role_list = assign_roles(len(self._rank_ids), self._role_mix_eff, self._role_offset)
         self.roles = dict(zip(self._rank_ids, role_list))
 
     def _beat_highlight(self, p, accent: float, append: bool) -> bool:

@@ -29,12 +29,14 @@ analysis, exact time-to-next-beat, real downbeats.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import subprocess
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -79,6 +81,10 @@ _MIN_SECTION_S = 8.0
 
 # Use a track map only when the analysis was confident enough to trust.
 MIN_MAP_CONFIDENCE = 0.30
+
+# On-disk cache format version: bump when the serialised layout changes so stale
+# files are ignored rather than mis-read. Stored in each .npz's ``meta`` row.
+_CACHE_FORMAT = 1
 
 _MAX_TRACK_S = 720.0  # analysis cap (12 min); beyond this fall back to live
 _DECODE_TIMEOUT_S = 90.0  # ffmpeg must finish well before the track does
@@ -162,6 +168,78 @@ class TrackMap:
     @property
     def usable(self) -> bool:
         return self.confidence >= MIN_MAP_CONFIDENCE and self.beats.size >= 8
+
+    def save(self, path: str | Path) -> None:
+        """Serialise to a compact ``.npz`` (no pickle) for the persistent cache.
+
+        Numeric arrays are stored directly; sections (including their SONG
+        palettes) are flattened into parallel arrays and rebuilt on load. The
+        whole map is ~0.2-0.4 MB compressed, so a played track can be cached and
+        replayed instantly next time, and a library can be pre-analysed ahead.
+        """
+        f = self.features
+        pal_rgb = np.array(
+            [c for s in self.sections for c in s.palette], dtype=np.float32
+        ).reshape(-1, 3)
+        pal_counts = np.array([len(s.palette) for s in self.sections], dtype=np.int32)
+        data = {
+            "meta": np.array(
+                [self.duration, self.bpm, self.confidence, float(self.downbeat),
+                 float(_CACHE_FORMAT)], dtype=np.float64),
+            "beats": self.beats.astype(np.float64),
+            "accents": self.accents.astype(np.float32),
+            "mid_beats": self.mid_beats.astype(np.float64),
+            "mid_accents": self.mid_accents.astype(np.float32),
+            "sec_start": np.array([s.start for s in self.sections], dtype=np.float64),
+            "sec_end": np.array([s.end for s in self.sections], dtype=np.float64),
+            "sec_energy": np.array([s.energy for s in self.sections], dtype=np.float32),
+            "pal_rgb": pal_rgb,
+            "pal_counts": pal_counts,
+        }
+        if f is not None:
+            data.update({
+                "f_bands": f.bands, "f_energy": f.energy, "f_flux": f.flux,
+                "f_bass_flux": f.bass_flux, "f_mid_flux": f.mid_flux,
+                "f_centroid": f.centroid, "f_melbank": f.melbank,
+            })
+        tmp = Path(path).with_suffix(".npz.tmp")
+        with open(tmp, "wb") as fh:
+            np.savez_compressed(fh, **data)
+        tmp.replace(path)  # atomic: a reader never sees a half-written file
+
+    @classmethod
+    def load(cls, path: str | Path) -> "TrackMap | None":
+        """Rebuild a :class:`TrackMap` from :meth:`save`; None if unreadable/stale."""
+        try:
+            with np.load(path, allow_pickle=False) as z:
+                meta = z["meta"]
+                if int(round(float(meta[4]))) != _CACHE_FORMAT:
+                    return None
+                pal_rgb = z["pal_rgb"]
+                pal_counts = z["pal_counts"]
+                sections: list[Section] = []
+                k = 0
+                for i in range(len(z["sec_start"])):
+                    n = int(pal_counts[i]) if i < len(pal_counts) else 0
+                    palette = [tuple(map(float, rgb)) for rgb in pal_rgb[k:k + n]]
+                    k += n
+                    sections.append(Section(
+                        float(z["sec_start"][i]), float(z["sec_end"][i]),
+                        float(z["sec_energy"][i]), palette))
+                features = None
+                if "f_energy" in z:
+                    features = TrackFeatures(
+                        bands=z["f_bands"], energy=z["f_energy"], flux=z["f_flux"],
+                        bass_flux=z["f_bass_flux"], mid_flux=z["f_mid_flux"],
+                        centroid=z["f_centroid"], melbank=z["f_melbank"])
+                return cls(
+                    duration=float(meta[0]), bpm=float(meta[1]),
+                    confidence=float(meta[2]), beats=z["beats"],
+                    accents=z["accents"], downbeat=int(round(float(meta[3]))),
+                    sections=sections, features=features,
+                    mid_beats=z["mid_beats"], mid_accents=z["mid_accents"])
+        except (OSError, KeyError, ValueError, IndexError):
+            return None
 
     def frame_at(self, pos: float, prev_pos: float | None = None) -> AnalysisFrame | None:
         """Synthesise the :class:`AnalysisFrame` for playback position ``pos``.
@@ -908,6 +986,8 @@ class TrackMapper:
         ffmpeg_bin: str,
         spawner: Callable[[Coroutine, str], asyncio.Task] | None = None,
         max_cache: int = 12,
+        cache_dir: str | Path | None = None,
+        max_disk: int = 512,
     ) -> None:
         self._ffmpeg = ffmpeg_bin
         self._spawn = spawner or (lambda coro, name: asyncio.create_task(coro, name=name))
@@ -916,6 +996,60 @@ class TrackMapper:
         self._max_cache = max_cache
         self._task: asyncio.Task | None = None
         self._inflight: str | None = None
+        # Persistent on-disk cache: a played/prefetched/pre-warmed track's map is
+        # written here and reloaded instantly on the next play, so the offline
+        # route has no per-track analysis delay once a track has been seen.
+        self._cache_dir = Path(cache_dir) if cache_dir else None
+        self._max_disk = max_disk
+        if self._cache_dir is not None:
+            try:
+                self._cache_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                _LOGGER.warning("Track-map cache dir unavailable: %s", self._cache_dir)
+                self._cache_dir = None
+
+    def _disk_path(self, track_id: str) -> Path | None:
+        if self._cache_dir is None:
+            return None
+        name = hashlib.sha1(track_id.encode("utf-8")).hexdigest()
+        return self._cache_dir / f"{name}.npz"
+
+    def _load_disk(self, track_id: str) -> TrackMap | None:
+        p = self._disk_path(track_id)
+        if p is None or not p.exists():
+            return None
+        tm = TrackMap.load(p)
+        return tm if tm is not None and tm.usable else None
+
+    def _save_disk(self, track_id: str, tm: TrackMap) -> None:
+        p = self._disk_path(track_id)
+        if p is None:
+            return
+        try:
+            tm.save(p)
+        except OSError:
+            _LOGGER.debug("Track-map disk write failed for %s", track_id, exc_info=True)
+            return
+        self._prune_disk()
+
+    def _prune_disk(self) -> None:
+        """Keep the disk cache under ``max_disk`` files (evict oldest by mtime)."""
+        if self._cache_dir is None:
+            return
+        try:
+            files = sorted(self._cache_dir.glob("*.npz"), key=lambda f: f.stat().st_mtime)
+        except OSError:
+            return
+        for f in files[:-self._max_disk] if len(files) > self._max_disk else []:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+    def has_disk(self, track_id: str | None) -> bool:
+        """True if a usable map for ``track_id`` is already on disk (pre-warm check)."""
+        p = self._disk_path(track_id) if track_id else None
+        return bool(p and p.exists())
 
     def get(self, track_id: str | None) -> TrackMap | None:
         if not track_id:
@@ -934,8 +1068,23 @@ class TrackMapper:
         return bool(f and f.permanent)
 
     def ensure(self, track_id: str | None, url: str | None) -> None:
-        """Kick off (or retry) analysis for ``track_id`` if due and not running."""
-        if not track_id or not url or track_id in self._cache:
+        """Make a map available for ``track_id``: load from disk, else analyse.
+
+        Called ~1 Hz (not in the render path), so a disk hit (the common case
+        once a track has been played/prefetched/pre-warmed) populates the
+        in-memory cache here and analysis is skipped entirely.
+        """
+        if not track_id or track_id in self._cache:
+            return
+        disk = self._load_disk(track_id)
+        if disk is not None:
+            self._cache[track_id] = disk
+            self._cache.move_to_end(track_id)
+            while len(self._cache) > self._max_cache:
+                self._cache.popitem(last=False)
+            self._failures.pop(track_id, None)
+            return
+        if not url:
             return
         f = self._failures.get(track_id)
         if f and (f.permanent or time.monotonic() < f.retry_at):
@@ -956,6 +1105,16 @@ class TrackMapper:
         finally:
             self._inflight = None
         self._record_result(track_id, url, result)
+        # Persist a good map so the next play is instant (write off the loop —
+        # a ~0.3 MB compressed save shouldn't stall the render frames).
+        tm = result.track_map
+        if tm is not None and tm.usable and self._cache_dir is not None:
+            try:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, self._save_disk, track_id, tm
+                )
+            except Exception:  # noqa: BLE001 - caching must never break sync
+                _LOGGER.debug("Track-map disk save failed for %s", track_id, exc_info=True)
 
     def _record_result(self, track_id: str, url: str, result: MapResult) -> None:
         tm = result.track_map

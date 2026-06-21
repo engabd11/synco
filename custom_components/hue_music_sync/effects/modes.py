@@ -3,7 +3,11 @@
 Two layers of instrument reactivity work together. **Named roles** give a few
 lights a dedicated job — **bass** (kick), **mid** (guitar/snare) or **vocal**
 (shimmer on singing) per ``role_mix`` — and rotate musically so the show keeps
-surprising. On top of that, **every** light reacts to its own slice of the full
+surprising. With ``dynamic_roles`` the split is also weighted by which bands are
+actually playing (per-band *presence*), re-dealt on each rotation: a track with
+no guitar hands its mid lamps to the bass/vocals that ARE there, so no lamp sits
+dull on an absent instrument, and the band re-forms as the song's instruments
+come and go. On top of that, **every** light reacts to its own slice of the full
 melbank spectrum (``spectral_pop``): it pops on a fresh attack in its frequency
 range, so a kick lights the low lamps, a snare the low-mids, a guitar/lead the
 mids and a cymbal the highs. The room therefore adapts to *all* instruments and
@@ -95,6 +99,9 @@ class ModeParams:
     mid_threshold: float = 1.3  # onset strength a mid hit needs to pop
     vocal_dim: float = 0.08    # very dim base of vocal-role lights
     role_rotate_beats: int = 0  # swap role assignments every N beats (0 = never)
+    dynamic_roles: bool = False  # weight the role split by which bands are
+    #                             actually playing (no lamp stuck on a dead
+    #                             instrument), re-dealt on each rotation
     hard_snap: bool = False    # snap on top of the wave instead of yielding to it
     # --- scheduled (grid-locked) pulse shaping --------------------------------
     # When the tempo grid is locked, EVERY beat fires a pulse (the Samsung /
@@ -173,7 +180,7 @@ MODE_PARAMS: dict[SyncMode, ModeParams] = {
         wave_gain=0.55, wave_speed=2.2, wave_width=0.32,
         anticipation_ms=80, drop_boost=0.60, build_desat=0.45,
         role_mix=(0.4, 0.3, 0.3), mid_gain=1.0, mid_threshold=1.25,
-        vocal_dim=0.05, role_rotate_beats=16, hard_snap=True,
+        vocal_dim=0.05, role_rotate_beats=16, dynamic_roles=True, hard_snap=True,
         flash_decay=0.80, bri_slew=0.30,
         highlight_quantile=0.40, weak_pulse=0.16, downbeat_pulse=0.45,
         colour_jump=0.09, colour_spread=0.55, full_room_accent=0.94,
