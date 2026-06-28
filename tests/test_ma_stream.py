@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from hue_music_sync.audio.ma_stream import (
+    as_track_list,
     attr_summary,
     iter_http_urls,
+    library_track_url,
     ma_stream_variants,
 )
 
@@ -14,6 +16,39 @@ class _Obj:
 
     def __init__(self, **kw):
         self.__dict__.update(kw)
+
+
+# --- library pre-warm: per-track URL resolution ----------------------------
+
+def test_library_track_url_builds_subsonic_stream():
+    # A Navidrome/OpenSubsonic provider mapping resolves to a /rest/stream URL
+    # built from the provider track id (the reliable pre-warm path).
+    track = _Obj(provider_mappings=[
+        _Obj(provider_domain="opensubsonic", item_id="track-42", url=None),
+    ])
+    url = library_track_url(track, ("http://nav:4533", "u", "p"))
+    assert url is not None
+    assert url.startswith("http://nav:4533/rest/stream.view?")
+    assert "id=track-42" in url
+
+
+def test_library_track_url_falls_back_to_http_mapping():
+    track = _Obj(provider_mappings=[
+        _Obj(provider_domain="filesystem", item_id="x", url="http://host/song.flac"),
+    ])
+    assert library_track_url(track, None) == "http://host/song.flac"
+
+
+def test_library_track_url_none_when_unresolvable():
+    track = _Obj(provider_mappings=[_Obj(provider_domain="spotify", item_id="x", url=None)])
+    assert library_track_url(track, None) is None
+
+
+def test_as_track_list_coerces_paged_results():
+    assert as_track_list(None) == []
+    assert as_track_list([1, 2]) == [1, 2]
+    assert as_track_list(_Obj(items=[3, 4])) == [3, 4]
+
 
 _BASE = "http://ma:8095"
 _IDS = ("sess1", "queue1", "item1", "player1")

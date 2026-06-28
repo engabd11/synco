@@ -26,7 +26,13 @@ from homeassistant.util import dt as dt_util
 
 from ..const import ANALYSIS_HOP, ANALYSIS_SAMPLE_RATE
 from .analyzer import AnalysisFrame, Analyzer
-from .ma_stream import attr_summary, iter_http_urls, ma_stream_variants
+from .ma_stream import (
+    as_track_list,
+    attr_summary,
+    iter_http_urls,
+    library_track_url,
+    ma_stream_variants,
+)
 from .subsonic import is_subsonic_provider, subsonic_stream_url
 
 # (url, username, password) for an OpenSubsonic/Navidrome library, or None.
@@ -237,6 +243,77 @@ def resolve_next_map(
     except Exception as err:  # noqa: BLE001 - defensive across MA versions
         _LOGGER.debug("[%s] next-track lookup failed: %s", entity_id, err)
         return None
+
+
+async def _iter_library_tracks(music, page: int = 500):
+    """Yield Music Assistant library Track objects, paginated, defensively.
+
+    Tries the paged ``get_library_tracks(limit=, offset=)`` shape first and falls
+    back to a no-argument call, tolerating client-version differences. Stops on
+    the first error so a pre-warm can never spin against an unexpected API.
+    """
+    offset = 0
+    while True:
+        try:
+            result = await music.get_library_tracks(limit=page, offset=offset)
+        except TypeError:
+            try:
+                result = await music.get_library_tracks()
+            except Exception as err:  # noqa: BLE001 - defensive across MA versions
+                _LOGGER.warning("Library pre-warm: cannot list tracks: %s", err)
+                return
+            for t in as_track_list(result):
+                yield t
+            return
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Library pre-warm: cannot list tracks: %s", err)
+            return
+        items = as_track_list(result)
+        if not items:
+            return
+        for t in items:
+            yield t
+        if len(items) < page:
+            return
+        offset += len(items)
+
+
+async def library_prewarm_items(
+    hass: HomeAssistant, subsonic: SubsonicCfg = None
+) -> list[tuple[str, str]]:
+    """``(track_signature, url)`` for every analysable track in the MA library.
+
+    Keyed by the SAME :func:`track_signature` the live player reports at
+    playback (uri | artist | title), so a pre-warmed map is found when the track
+    is later played — exactly as the next-track prefetch already relies on.
+    """
+    mass = _find_mass_client(hass)
+    music = getattr(mass, "music", None) if mass is not None else None
+    if music is None or not hasattr(music, "get_library_tracks"):
+        _LOGGER.warning(
+            "Library pre-warm: Music Assistant library is not available "
+            "(no music controller); nothing to pre-analyse"
+        )
+        return []
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    async for track in _iter_library_tracks(music):
+        try:
+            sig = track_signature(
+                getattr(track, "uri", None),
+                _media_item_artist(track),
+                getattr(track, "name", None),
+            )
+            if not sig or sig in seen:
+                continue
+            url = library_track_url(track, subsonic)
+            if not url:
+                continue
+            seen.add(sig)
+            out.append((sig, url))
+        except Exception:  # noqa: BLE001 - skip any malformed item
+            _LOGGER.debug("Library pre-warm: skipping a malformed track", exc_info=True)
+    return out
 
 
 def _ma_player_codec(player) -> str:

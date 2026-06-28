@@ -6,6 +6,8 @@ URL-variant and provider logic can be unit-tested on their own.
 
 from __future__ import annotations
 
+from .subsonic import is_subsonic_provider, subsonic_stream_url
+
 
 def iter_http_urls(obj):
     """Yield http(s) URL strings found on an MA object's public attributes.
@@ -32,6 +34,45 @@ def iter_http_urls(obj):
             for vv in val.values():
                 if isinstance(vv, str) and vv.startswith(("http://", "https://")):
                     yield vv
+
+
+def library_track_url(track, subsonic) -> str | None:
+    """A decodable URL for an MA library Track (for offline pre-analysis).
+
+    Prefers an (Open)Subsonic provider mapping built into a ``/rest/stream`` URL
+    (the reliable path for a Navidrome library), then any http URL the track's
+    provider mappings expose. ``subsonic`` is ``(url, user, password)`` or None.
+    Pure, so it is unit-tested.
+    """
+    mappings = getattr(track, "provider_mappings", None) or []
+    for pm in mappings:
+        prov = getattr(pm, "provider_domain", None) or getattr(pm, "provider_instance", None)
+        if subsonic and is_subsonic_provider(prov):
+            url = subsonic_stream_url(*subsonic, getattr(pm, "item_id", None))
+            if url:
+                return url
+        u = getattr(pm, "url", None)
+        if isinstance(u, str) and u.startswith(("http://", "https://")):
+            return u
+    for u in iter_http_urls(track):
+        return u
+    return None
+
+
+def as_track_list(result) -> list:
+    """Coerce an MA library response (a list, or a paged object) into a list."""
+    if result is None:
+        return []
+    if isinstance(result, list):
+        return result
+    for attr in ("items", "tracks", "data"):
+        val = getattr(result, attr, None)
+        if isinstance(val, list):
+            return val
+    try:
+        return list(result)
+    except TypeError:
+        return []
 
 
 def attr_summary(obj) -> dict:

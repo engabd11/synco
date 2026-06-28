@@ -150,6 +150,10 @@
           "description": "Media player to follow."
         }
       }
+    },
+    "prewarm_library": {
+      "name": "Pre-analyse music library",
+      "description": "Analyse your whole Music Assistant library in the background and cache the results to disk, so every track plays instantly with full offline track-map reaction the first time too. Gentle and resumable. For a Navidrome / OpenSubsonic library, set the library URL and login in the integration options first."
     }
   }
 }

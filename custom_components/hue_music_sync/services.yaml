@@ -145,3 +145,13 @@ set_options:
       selector:
         entity:
           domain: media_player
+
+prewarm_library:
+  name: Pre-analyse music library
+  description: >-
+    Analyse your whole Music Assistant library in the background and cache the
+    results to disk, so every track plays instantly with full beat-accurate
+    (offline track-map) reaction the first time too - not just on a repeat or in
+    a queue. Gentle and resumable: it analyses one track at a time, yields to
+    live playback, and skips tracks already cached. For a Navidrome / OpenSubsonic
+    library, set the library URL and login in the integration options first.

@@ -107,6 +107,11 @@ _DRUM_WINDOW_S = 4.0
 _MAP_COMMIT_WINDOW_S = 6.0
 
 
+def trackmap_cache_dir(hass) -> str:
+    """The shared on-disk track-map cache directory (coordinator + pre-warm)."""
+    return hass.config.path("hue_music_sync", "trackmaps")
+
+
 def _circular_distance(a: float, b: float, period: float) -> float:
     """Smallest distance between two phases on a cyclic timeline of ``period``."""
     d = abs(a - b) % period
@@ -220,7 +225,7 @@ class SyncSession:
             spawner=lambda coro, name: hass.async_create_background_task(coro, name),
             # Persist analyzed maps under HA's config dir so a track plays
             # instantly the second time (and after a library pre-warm).
-            cache_dir=hass.config.path("hue_music_sync", "trackmaps"),
+            cache_dir=trackmap_cache_dir(hass),
         )
         self._map_track: str | None = None  # last track a map URL was resolved for
         self._map_check = 0.0

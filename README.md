@@ -146,6 +146,15 @@ Each entertainment area gets the following entities:
 | `hue_music_sync.activate` | Start sync; optionally set mode, effect, colour, brightness, and media player |
 | `hue_music_sync.deactivate` | Stop sync |
 | `hue_music_sync.set_options` | Update any setting live without restarting the sync session |
+| `hue_music_sync.prewarm_library` | Analyse your whole Music Assistant library in the background and cache it to disk, so **every** track plays instantly with full beat-accurate reaction the first time too — not just on a repeat or in a queue |
+
+**Pre-analysing the library** (`prewarm_library`) is the way to make a brand-new
+single track react immediately. It runs gently in the background — one track at
+a time, yielding to live playback — and is resumable, so re-running only
+analyses what's new (run it once after setup, or schedule it from an
+automation). For a Navidrome / OpenSubsonic library, set the library URL and
+login in the options first so stream URLs can be built without a playback
+session.
 
 ---
 
@@ -190,6 +199,6 @@ The DTLS transport is implemented in pure Python — no external OpenSSL depende
 
 - **Hue Bridge v2 only** — the v1 (round) bridge does not support Entertainment streaming
 - **One area streaming at a time per bridge** — a single DTLS channel per bridge; multiple bridges each get their own entry
-- **Track analysis takes a moment** — full offline analysis can take 10+ seconds on slower hardware; the fallback animation runs during this window, then the show upgrades to the real analysis as soon as it is ready (transient failures, e.g. a busy library, are retried automatically, and the next track is pre-analysed for gapless transitions)
+- **Track analysis takes a moment** — full offline analysis can take 10+ seconds on slower hardware; the fallback runs during this window, then the show upgrades to the real analysis as soon as it is ready (transient failures, e.g. a busy library, are retried automatically, and the next track is pre-analysed for gapless transitions). Run the `prewarm_library` service once to analyse the whole library ahead of time and remove this first-play delay entirely
 - **Playback position granularity** — players that report position coarsely (e.g. Sonos at ~500 ms) reduce track-map timing precision
 - **Intense / Extreme strobing** — these modes bypass the flash limiter by design; they are not suitable for anyone with photosensitivity

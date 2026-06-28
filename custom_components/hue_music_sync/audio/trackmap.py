@@ -960,6 +960,23 @@ async def build_track_map(
         return MapResult(None, decoded=False, error="analysis timed out")
 
 
+# One ffmpeg decode at a time across the WHOLE integration (every area's mapper
+# plus the library pre-warm), so background analysis can never run two decodes
+# at once and starve the render loops. Created lazily and rebound if the running
+# loop changes (so unit tests using fresh ``asyncio.run`` loops still work).
+_GLOBAL_LOCK: "asyncio.Lock | None" = None
+_GLOBAL_LOCK_LOOP = None
+
+
+def _global_analysis_lock() -> "asyncio.Lock":
+    global _GLOBAL_LOCK, _GLOBAL_LOCK_LOOP
+    loop = asyncio.get_running_loop()
+    if _GLOBAL_LOCK is None or _GLOBAL_LOCK_LOOP is not loop:
+        _GLOBAL_LOCK = asyncio.Lock()
+        _GLOBAL_LOCK_LOOP = loop
+    return _GLOBAL_LOCK
+
+
 @dataclass(slots=True)
 class _Failure:
     """Failure bookkeeping for one track, driving the retry/give-up decision."""
@@ -996,6 +1013,7 @@ class TrackMapper:
         self._max_cache = max_cache
         self._task: asyncio.Task | None = None
         self._inflight: str | None = None
+        self._stop_prewarm = False
         # Persistent on-disk cache: a played/prefetched/pre-warmed track's map is
         # written here and reloaded instantly on the next play, so the offline
         # route has no per-track analysis delay once a track has been seen.
@@ -1096,9 +1114,13 @@ class TrackMapper:
             self._analyze(track_id, url), f"hue_music_sync_trackmap_{track_id[:24]}"
         )
 
+    def _analysis_lock(self) -> "asyncio.Lock":
+        return _global_analysis_lock()
+
     async def _analyze(self, track_id: str, url: str) -> None:
         try:
-            result = await build_track_map(self._ffmpeg, url)
+            async with self._analysis_lock():  # yields to / blocks the pre-warm
+                result = await build_track_map(self._ffmpeg, url)
         except Exception:  # noqa: BLE001 - analysis must never break sync
             _LOGGER.debug("Track-map analysis crashed for %s", url, exc_info=True)
             result = MapResult(None, decoded=False, error="analysis crashed")
@@ -1158,7 +1180,62 @@ class TrackMapper:
         while len(self._failures) > self._max_cache * 2:
             self._failures.popitem(last=False)
 
+    async def prewarm(
+        self,
+        items,
+        *,
+        delay_s: float = 1.0,
+        progress=None,
+    ) -> tuple[int, int]:
+        """Analyse + cache every uncached ``(track_id, url)`` one at a time.
+
+        A gentle, resumable background sweep of a music library so a track plays
+        instantly (offline track-map) the first time too. Already-cached tracks
+        (in memory or on disk) and permanently-failed ones are skipped, so a
+        re-run continues where it left off. The shared analysis lock means a
+        live playback analysis takes priority — the pre-warm waits between
+        tracks and never decodes two streams at once. Returns
+        ``(analysed, considered)``.
+        """
+        self._stop_prewarm = False
+        analysed = considered = 0
+        for track_id, url in items:
+            if self._stop_prewarm:
+                break
+            considered += 1
+            if not track_id or not url:
+                continue
+            if track_id in self._cache or self.has_disk(track_id) or self.failed(track_id):
+                continue
+            try:
+                async with self._analysis_lock():
+                    result = await build_track_map(self._ffmpeg, url)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - one bad track must not stop the sweep
+                _LOGGER.debug("Pre-warm analysis crashed for %s", url, exc_info=True)
+                result = MapResult(None, decoded=False, error="prewarm crashed")
+            self._record_result(track_id, url, result)
+            tm = result.track_map
+            if tm is not None and tm.usable and self._cache_dir is not None:
+                try:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, self._save_disk, track_id, tm
+                    )
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug("Pre-warm disk save failed for %s", track_id, exc_info=True)
+                analysed += 1
+                if progress is not None:
+                    progress(analysed, considered)
+            await asyncio.sleep(delay_s)  # be gentle on CPU + the music library
+        return analysed, considered
+
+    def stop_prewarm(self) -> None:
+        """Ask an in-flight :meth:`prewarm` sweep to stop after the current track."""
+        self._stop_prewarm = True
+
     async def close(self) -> None:
+        self._stop_prewarm = True
         if self._task is not None and not self._task.done():
             self._task.cancel()
         self._task = None

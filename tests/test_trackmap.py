@@ -112,6 +112,36 @@ def test_mapper_loads_from_disk_without_reanalysing(map_120: TrackMap, tmp_path)
     assert mapper.get(tid) is not None  # now served from memory
 
 
+def test_prewarm_analyses_and_caches_then_skips_on_rerun(map_120: TrackMap, tmp_path, monkeypatch):
+    # The library pre-warm analyses every uncached (track_id, url) and writes it
+    # to disk; a re-run skips the now-cached tracks (resumable, no re-analysis).
+    import asyncio
+
+    import hue_music_sync.audio.trackmap as tmmod
+
+    seen: list[str] = []
+
+    async def fake_build(ffmpeg, url, max_seconds=tmmod._MAX_TRACK_S):
+        seen.append(url)
+        return MapResult(track_map=map_120, decoded=True)
+
+    monkeypatch.setattr(tmmod, "build_track_map", fake_build)
+    items = [("artist|a|1", "http://lib/1"), ("artist|b|2", "http://lib/2")]
+
+    mapper = TrackMapper("ffmpeg", cache_dir=tmp_path)
+    analysed, considered = asyncio.run(mapper.prewarm(items, delay_s=0))
+    assert (analysed, considered) == (2, 2)
+    assert mapper.has_disk("artist|a|1") and mapper.has_disk("artist|b|2")
+    assert seen == ["http://lib/1", "http://lib/2"]
+
+    # A fresh mapper over the same library: everything is already on disk.
+    seen.clear()
+    mapper2 = TrackMapper("ffmpeg", cache_dir=tmp_path)
+    analysed2, considered2 = asyncio.run(mapper2.prewarm(items, delay_s=0))
+    assert (analysed2, considered2) == (0, 2)
+    assert seen == []  # nothing re-analysed
+
+
 def test_ensure_loads_from_disk_even_without_a_url(map_120: TrackMap, tmp_path):
     # The single-track fix: a previously-played track is cached on disk, so even
     # with NO fresh per-track URL (a single ad-hoc track MA won't expose a stream
