@@ -88,10 +88,12 @@ _RECONNECT_BASE_S = 1.0
 _RECONNECT_MAX_S = 8.0
 
 # Background upgrade of the metadata fallback to a real tap: probe soon after
-# falling back (the MA stream is usually ready within a couple of seconds), then
-# back off so a genuinely tap-less player settles to an occasional check.
-_META_UPGRADE_START_S = 3.0
-_META_UPGRADE_MAX_S = 60.0
+# falling back (the MA stream / queue streamdetails are usually ready within a
+# second or two — especially for a single ad-hoc track), then back off only
+# mildly so a song that starts on metadata still recovers to track-map playback
+# within a few seconds instead of being stranded on the non-reactive fallback.
+_META_UPGRADE_START_S = 1.5
+_META_UPGRADE_MAX_S = 6.0
 
 # Drum-pad mode auto-expires this long after the last tap / keepalive, so an
 # abruptly-closed card can never strand the room with its automatic beats off.
@@ -937,15 +939,20 @@ class SyncSession:
             return None
         tm = self._mapper.get(src.track_id)
         pos = self._analysis_position()
-        # Commit to one regime per track (item 4): adopt the map only if it's
-        # ready near the track start; otherwise stay causal for the rest of the
-        # track instead of switching mid-song. Decided once, then latched.
-        if self._map_commit is None and pos is not None:
-            if tm is not None and pos <= _MAP_COMMIT_WINDOW_S:
-                self._map_commit = True
-            elif pos > _MAP_COMMIT_WINDOW_S:
-                self._map_commit = False  # too late to switch without a jarring jump
-        if not self._map_commit or tm is None or pos is None:
+        # The offline TrackMapSource *is* the map regime — always use its map.
+        # For a live tap, commit to one regime per track (item 4): adopt the map
+        # only if it's ready near the track start, else stay causal for the rest
+        # of the track rather than switching the grid mid-song. Decided once.
+        if isinstance(src, TrackMapSource):
+            use_map = tm is not None
+        else:
+            if self._map_commit is None and pos is not None:
+                if tm is not None and pos <= _MAP_COMMIT_WINDOW_S:
+                    self._map_commit = True
+                elif pos > _MAP_COMMIT_WINDOW_S:
+                    self._map_commit = False
+            use_map = bool(self._map_commit)
+        if not use_map or tm is None or pos is None:
             return None
         grid = tm.grid_at(pos, self._map_prev_pos)
         self._map_prev_pos = pos

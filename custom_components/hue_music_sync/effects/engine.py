@@ -61,6 +61,11 @@ _SILENCE_GATE = 0.12
 # the audio actually stopping — much snappier than the slow energy envelope,
 # which is tuned for gentle breathing, not a silence cut-off.
 _GATE_DECAY = 0.85
+# Loudness at/above which a beat flashes at full; below it the flash scales DOWN
+# in proportion to the beat's actual height, so a track fading out (tiny beats)
+# brightens a little, not at full. Uses the smoothed energy contour (not the
+# peak-hold gate, which holds through the fade), so it follows the fade down.
+_LOUD_REF = 0.30
 
 # Asymmetric band envelope followers (LedFx-style): rise fast on new energy,
 # fall gently, so continuous brightness rides the music instead of jittering.
@@ -549,6 +554,11 @@ class EffectEngine:
         # One decision for everything visible: the scheduled beat (locked) or
         # the qualifying kick (unlocked reactive fallback).
         vis_strength, vis_bass, grid_locked = self._visible_event(frame, beatgrid)
+        # Scale the flash by the beat's actual HEIGHT (item 3 / fade-outs): the
+        # scheduled accent is normalised to the passage, so without this a track
+        # fading out keeps flashing full on tiny beats. The smoothed loudness
+        # follows the fade down, so flashes shrink with the music.
+        loud_scale = min(1.0, max(vis_bass, self._energy_env) / _LOUD_REF)
         # The highlight decision: rank this beat's accent against the recent
         # passage. Selective modes only *fire* on highlights — everything else
         # ticks quietly or stays dark — which is what makes the hits read as
@@ -660,10 +670,10 @@ class EffectEngine:
                 )
         else:
             kick = kick_flash(p, vis_strength, vis_bass) * flash_scale
-        # Silence gate: flashes fade out with the audio and vanish in a gap, so
-        # a finished/paused track never strobes (item 2).
-        kick *= music_gate
-        midf = mid_flash(p, mid_strength) * music_gate
+        # Silence gate (item 2: vanish in a gap) × loudness scale (item 3: a
+        # fading beat brightens only as much as its height).
+        kick *= music_gate * loud_scale
+        midf = mid_flash(p, mid_strength) * music_gate * loud_scale
         # The full-room moment: the passage's very biggest hits take EVERY
         # light at once (vocal lights a touch softer), the way the reference
         # shows punctuate a chorus. Ordinary highlights stay role-separated.

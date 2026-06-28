@@ -177,9 +177,13 @@ class TrackMapSource:
             return False  # analysis already tried and failed for this track
         if self._mapper.get(self._track_id) is None:
             url = resolve_map_url(self._hass, self._entity_id, self._subsonic)
-            if url is None:
-                return False  # radio/flow stream: nothing analysable per-track
+            # ensure() loads a cached map from disk even when ``url`` is None, so
+            # a previously-played track gets track-map playback as a *single*
+            # track too (no queue / no fresh per-track URL needed). Only give up
+            # when there is neither a cached map nor anything analysable.
             self._mapper.ensure(self._track_id, url)
+            if self._mapper.get(self._track_id) is None and url is None:
+                return False  # radio/flow & never analysed: nothing to play
         pos = self._reported_position()
         self._pos = pos if pos is not None else 0.0
         self._prev_query = None

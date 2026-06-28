@@ -112,6 +112,24 @@ def test_mapper_loads_from_disk_without_reanalysing(map_120: TrackMap, tmp_path)
     assert mapper.get(tid) is not None  # now served from memory
 
 
+def test_ensure_loads_from_disk_even_without_a_url(map_120: TrackMap, tmp_path):
+    # The single-track fix: a previously-played track is cached on disk, so even
+    # with NO fresh per-track URL (a single ad-hoc track MA won't expose a stream
+    # for), ensure() serves it from disk instead of failing to the metadata
+    # fallback — TrackMapSource.open() then succeeds and the lights react.
+    spawned = []
+    mapper = TrackMapper(
+        "ffmpeg",
+        spawner=lambda coro, name: spawned.append(name) or _DummyTask(coro),
+        cache_dir=tmp_path,
+    )
+    tid = "single|track|1"
+    mapper._save_disk(tid, map_120)
+    mapper.ensure(tid, None)  # no URL at all
+    assert mapper.get(tid) is not None  # served from disk
+    assert spawned == []  # and no analysis needed
+
+
 class _DummyTask:
     def __init__(self, coro):
         coro.close()  # we never run it; just don't leak the coroutine

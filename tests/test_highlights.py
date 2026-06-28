@@ -125,6 +125,33 @@ def test_no_beat_reactions_without_audio():
     assert eng.colour_phase - colour_before < 0.02  # and the colour doesn't jump
 
 
+def test_fade_out_beats_brighten_with_the_beat_height():
+    # Item 3 / fade-outs: the scheduled accent is normalised to the passage, so
+    # a quiet fading beat used to flash near full. The flash must now scale with
+    # the beat's actual loudness — a loud beat slams, a tiny fading one barely
+    # lifts the room.
+    def peak_at(loud: float) -> float:
+        eng = EffectEngine(_channels(5))
+        eng.set_mode(SyncMode.EXTREME)
+        bands = lambda m: {"sub_bass": m, "bass": m, "low_mid": m * 0.5,
+                           "mid": m * 0.4, "high": m * 0.3}
+        for _ in range(40):  # settle the loudness envelope at this level
+            eng.render(AnalysisFrame(bands=bands(loud), energy=loud), _DT)
+        kick = AnalysisFrame(bands=bands(loud), energy=loud, beat=True,
+                             beat_strength=2.5, bass_beat=True, bass_strength=2.5)
+        peak = max(max(c) for c in eng.render(kick, _DT).values())
+        for _ in range(8):  # swell
+            out = eng.render(AnalysisFrame(bands=bands(loud), energy=loud), _DT)
+            peak = max(peak, max(max(c) for c in out.values()))
+        return peak
+
+    loud = peak_at(0.8)
+    fading = peak_at(0.06)
+    assert loud > 0.7            # a loud beat still slams the room
+    assert fading < 0.4          # a tiny fading beat barely lifts it
+    assert loud > fading + 0.3   # brightness clearly tracks the beat's height
+
+
 def test_metadata_source_emits_no_beats():
     # The metadata fallback must be ambient-only: no fabricated bass_beat (that
     # was the "lights strobe with no audio" source). Build a frame the way the
